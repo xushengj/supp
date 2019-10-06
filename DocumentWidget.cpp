@@ -7,6 +7,7 @@
 #include <QCryptographicHash>
 #include <QDebug>
 #include <QRegularExpression>
+#include <QTextCodec>
 #include <cassert>
 
 #ifndef HASH_ALGORITHM
@@ -105,6 +106,7 @@ bool DocumentWidget::initialize()
 void DocumentWidget::setDocumentContent(QIODevice *src)
 {
     QTextStream ts(src);
+    ts.setCodec(QTextCodec::codecForName("UTF-8"));
     ui_editor->setPlainText(ts.readAll());
 }
 
