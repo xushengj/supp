@@ -1,11 +1,11 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include <QtGlobal>
 #include <QMainWindow>
 #include <QTabWidget>
-#include <cassert>
 
-#include "DocumentWidget.h"
+#include "ui/DocumentWidget.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -17,7 +17,7 @@ class MainWindow : public QMainWindow
 
 public:
     MainWindow(QWidget *parent = nullptr);
-    ~MainWindow();
+    virtual ~MainWindow() override;
 
 protected:
     void focusInEvent(QFocusEvent *event) override;
@@ -58,16 +58,16 @@ private:
 
     DocumentWidget* getCurrentDocumentWidget() {
         QWidget* widget = tabWidget->currentWidget();
-        assert(widget && "Broken invariant: tabWidget->currentWidget() returns nullptr!");
+        Q_ASSERT(widget && "Broken invariant: tabWidget->currentWidget() returns nullptr!");
         DocumentWidget* doc = qobject_cast<DocumentWidget*>(widget);
-        assert(doc && "Broken invariant: tabWidget->currentWidget() returns QWidget other than DocumentWidget!");
+        Q_ASSERT(doc && "Broken invariant: tabWidget->currentWidget() returns QWidget other than DocumentWidget!");
         return doc;
     }
     DocumentWidget* getDocumentWidget(int index) {
         QWidget* widget = tabWidget->widget(index);
-        assert(widget && "Broken invariant: tabWidget->widget() returns nullptr!");
+        Q_ASSERT(widget && "Broken invariant: tabWidget->widget() returns nullptr!");
         DocumentWidget* doc = qobject_cast<DocumentWidget*>(widget);
-        assert(doc && "Broken invariant: tabWidget->currentWidget() returns QWidget other than DocumentWidget!");
+        Q_ASSERT(doc && "Broken invariant: tabWidget->currentWidget() returns QWidget other than DocumentWidget!");
         return doc;
     }
 

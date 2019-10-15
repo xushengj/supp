@@ -3,7 +3,7 @@
 #include "DocumentWidget.h"
 #include <QMessageBox>
 #include <QFileDialog>
-#include <cassert>
+#include <QtGlobal>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -141,7 +141,7 @@ void MainWindow::handleCloseDocument(DocumentWidget* doc)
         tabWidget->removeTab(tabWidget->indexOf(doc));
         doc->deleteLater();
     }else{
-        assert(static_cast<QWidget*>(doc) == tabWidget->currentWidget());
+        Q_ASSERT(static_cast<QWidget*>(doc) == tabWidget->currentWidget());
         doc->reassociate(QString());
     }
 }

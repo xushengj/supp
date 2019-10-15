@@ -16,18 +16,35 @@ DEFINES += QT_DEPRECATED_WARNINGS
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
-    DocumentEdit.cpp \
-    DocumentWidget.cpp \
-    main.cpp \
-    MainWindow.cpp
+    core/Bundle.cpp \
+    core/DiagnosticEmitter.cpp \
+    core/ExecutionContext.cpp \
+    core/Expression.cpp \
+    core/IRValidate.cpp \
+    core/OutputHandler.cpp \
+    core/Task.cpp \
+    ui/DocumentEdit.cpp \
+    ui/DocumentWidget.cpp \
+    ui/main.cpp \
+    ui/MainWindow.cpp
 
 HEADERS += \
-    DocumentEdit.h \
-    DocumentWidget.h \
-    MainWindow.h
+    util/ADT.h \
+    core/Bundle.h \
+    core/ExecutionContext.h \
+    core/Expression.h \
+    core/IR.h \
+    core/OutputHandlerBase.h \
+    core/Task.h \
+    core/Value.h \
+    core/DiagnosticEmitter.h \
+    ui/DocumentEdit.h \
+    ui/DocumentWidget.h \
+    ui/MainWindow.h \
+
 
 FORMS += \
-    MainWindow.ui
+    ui/MainWindow.ui
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin

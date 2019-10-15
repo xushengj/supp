@@ -8,7 +8,6 @@
 #include <QDebug>
 #include <QRegularExpression>
 #include <QTextCodec>
-#include <cassert>
 
 #ifndef HASH_ALGORITHM
 #define HASH_ALGORITHM QCryptographicHash::Keccak_512

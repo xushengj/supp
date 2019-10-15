@@ -1,0 +1,96 @@
+Top level: object
+
+valid set of type string: ValTys = {"Int", "String", "NodePtr", "ValuePtr"}
+valid set of type string in IR: IRValTys = {"Int", "String"}
+
+IRSet: array of <IRObject>
+
+OutputSet: object
+	<OutputName>: <OutputObject>
+
+TaskSet: Array
+	<TaskEntry Object>:
+		"Input" : <IRName> input ir name
+		// we assert extern output type for now
+		"OutputTypeName" : <OutputName>
+		"Body" : <Task Object>
+
+<IRObject>:
+	"Node": Array of <IRNodeObject>
+	"Root": <Name> of root node type
+
+<IRNodeObject>:
+	"Name": <Name>
+	"Parameter": Array
+		<Parameter object>
+			"Name": <Name>
+			"Type": IRValTys
+			"Unique": true / false [optional; default to false]
+	"PrimaryKey" : <Name of primary key parameter>
+	"Child": Array of string <IR node Name>
+
+
+<OutputObject>:
+	"BaseType": {"Text"}
+	"TextMIME": <MIME> [optional, defaults to empty]
+	"TextCodec": <CodecName> [optional, defaults to "utf-8"]
+
+<TaskObject>:
+	"IR": <Name of IR>
+	"GlobalVariable": <DeclObject>
+	"Function": Array of <FunctionObject>
+	"NodeMember": Object
+		<NodeName> : <DeclObject>
+	"Pass": Array
+		<PassObject>:
+			<NodeName>: NodeCallbackObject
+				"OnEntry": <FunctionName>
+				"OnExit": <FunctionName>
+
+<DeclArray>:
+	Object
+		"Name": <Name>
+		"Type": ValTys
+		"Initializer": <int/string>
+
+<FunctionObject>
+	"Name": <Name>
+	"ParameterRequired": <DeclArray>
+	"ParameterOptional": <DeclArray>
+	"LocalVariable": <DeclArray>
+	"Statement": Array of <StatementObject>
+
+<StatementObject>:
+	"Type": {"Unreachable", "Assignment", "Output", "Call", "Return", "Branch", "LabelPseudoStatement"}
+	(Assignment Only)
+	"AssignLHS": string / <ExpressionObject>
+	"AssignRHS": <ExpressionObject>
+	(Output Only)
+	"OutputExpr": <ExpressionObject>
+	(Call Only)
+	"CallFunction": <FunctionName>
+	"CallArgument": Array of <ExpressionObject>
+	(Branch Only)
+	"BranchDefault": <BranchActionObject>
+	"BranchCase": Array
+		Object
+			"Condition": <ExpressionObject>
+			"Action": <BranchActionObject>
+	(LabelPseudoStatement only)
+	"LabelName": <Name>
+
+<BranchActionObject>:
+	"ActionType": {"Unreachable", "Fallthrough", "Jump"}
+	(Jump Only)
+	"Label": <LabelName>
+
+For now: (Yes we won't even have branch yet, and there is no initializer for any pointer)
+<ExpressionObject>:
+	"ExprType": {"Literal", "VariableRead", "VariableAddress"}
+	(Literal Only)
+	"LiteralValue": int/string
+	(VariableRead and VariableAddress Only)
+	"VariableName": string
+	(VariableRead Only)
+	"VariableReadType": ValTys
+
