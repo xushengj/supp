@@ -19,6 +19,12 @@ class ExpressionBase
 public:
     virtual ~ExpressionBase(){}
 
+    /**
+     * @brief clone return a new instance of expression, needed when copying parent functions around
+     * @return pointer to new instance
+     */
+    virtual ExpressionBase* clone() const = 0;
+
     virtual ValueType getExpressionType() const = 0;
     /**
      * @brief getDependency get list of expression indices that this expression depends upon
@@ -47,6 +53,25 @@ public:
     void emitTypeErrorDiagnostic(ExecutionContext& ctx, ValueType expectedTy, ValueType actualTy, QString exprText = QString()) const;
 };
 
+// an expression list that use deep copy
+class ExprList : public QList<ExpressionBase*>
+{
+public:
+    ExprList(): QList<ExpressionBase*>(){}
+    ~ExprList(){
+        for(ExpressionBase* ptr : *this){
+            delete ptr;
+        }
+    }
+    ExprList(ExprList&&) = default;
+    ExprList(const ExprList& rhs){
+        clear();
+        for(ExpressionBase* ptr : rhs){
+            push_back(ptr->clone());
+        }
+    }
+};
+
 /**
  * @brief The LiteralExpression class
  *
@@ -67,6 +92,7 @@ public:
           val(str)
     {}
     virtual ~LiteralExpression() override{}
+    virtual LiteralExpression* clone() const override{return new LiteralExpression(ty, val);}
     virtual ValueType getExpressionType() const override {return ty;}
     virtual bool evaluate(ExecutionContext& ctx, QVariant& retVal, const QList<QVariant>& dependentExprResults) const override;
 private:
@@ -86,6 +112,7 @@ public:
         : variableName(varName)
     {}
     virtual ~VariableAddressExpression() override {}
+    virtual VariableAddressExpression* clone() const override{return new VariableAddressExpression(variableName);}
     virtual ValueType getExpressionType() const override {return ValueType::ValuePtr;}
     virtual bool evaluate(ExecutionContext& ctx, QVariant& retVal, const QList<QVariant>& dependentExprResults) const override;
 private:
@@ -104,6 +131,7 @@ public:
         : ty(ty), variableName(varName)
     {}
     virtual ~VariableReadExpression() override {}
+    virtual VariableReadExpression* clone() const override {return new VariableReadExpression(ty, variableName);}
     virtual ValueType getExpressionType() const override {return ty;}
     virtual bool evaluate(ExecutionContext& ctx, QVariant& retVal, const QList<QVariant>& dependentExprResults) const override;
 private:
@@ -127,6 +155,7 @@ public:
         : specifier(specifier)
     {}
     virtual ~NodePtrExpression() override {}
+    virtual NodePtrExpression* clone() const override {return new NodePtrExpression(specifier);}
     virtual ValueType getExpressionType() const override {return ValueType::NodePtr;}
     virtual bool evaluate(ExecutionContext& ctx, QVariant& retVal, const QList<QVariant>& dependentExprResults) const override;
 private:

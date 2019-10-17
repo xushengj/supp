@@ -1,0 +1,6 @@
+Top level: Array of <NodeInstanceObject>
+
+<NodeInstanceObject>:
+	"Type": <IRNodeTypeName>
+	"Parent": <ParentIndex> // must be less than index of current node
+	"Parameter": Array of initializer

@@ -19,6 +19,7 @@ struct OutputDescriptor{
         QString codecName;  //!< the name of output codec
     };
 
+    QString name;
     OutputBaseType baseTy;
     TextOutputInfo textInfo;
 };

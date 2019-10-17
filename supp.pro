@@ -29,6 +29,7 @@ SOURCES += \
     ui/MainWindow.cpp
 
 HEADERS += \
+    core/CLIDriver.h \
     util/ADT.h \
     core/Bundle.h \
     core/ExecutionContext.h \

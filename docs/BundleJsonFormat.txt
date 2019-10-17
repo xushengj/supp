@@ -5,17 +5,12 @@ valid set of type string in IR: IRValTys = {"Int", "String"}
 
 IRSet: array of <IRObject>
 
-OutputSet: object
-	<OutputName>: <OutputObject>
+OutputSet: array of <OutputObject>
 
-TaskSet: Array
-	<TaskEntry Object>:
-		"Input" : <IRName> input ir name
-		// we assert extern output type for now
-		"OutputTypeName" : <OutputName>
-		"Body" : <Task Object>
+TaskSet: Array of <TaskObject>
 
 <IRObject>:
+	"Name": <Name>
 	"Node": Array of <IRNodeObject>
 	"Root": <Name> of root node type
 
@@ -26,21 +21,24 @@ TaskSet: Array
 			"Name": <Name>
 			"Type": IRValTys
 			"Unique": true / false [optional; default to false]
-	"PrimaryKey" : <Name of primary key parameter>
+	"PrimaryKey" : <Name of primary key parameter> [optional; default to empty]
 	"Child": Array of string <IR node Name>
 
 
 <OutputObject>:
+	"Name": <Name>
 	"BaseType": {"Text"}
 	"TextMIME": <MIME> [optional, defaults to empty]
 	"TextCodec": <CodecName> [optional, defaults to "utf-8"]
 
 <TaskObject>:
-	"IR": <Name of IR>
-	"GlobalVariable": <DeclObject>
-	"Function": Array of <FunctionObject>
+	"Input" : <IRName> input ir name
+	// we assert extern output type for now
+	"Output" : <OutputName>
+	"GlobalVariable": <DeclArray>
 	"NodeMember": Object
-		<NodeName> : <DeclObject>
+		<NodeName> : <DeclArray>
+	"Function": array of <FunctionObject>
 	"Pass": Array
 		<PassObject>:
 			<NodeName>: NodeCallbackObject
@@ -58,6 +56,7 @@ TaskSet: Array
 	"ParameterRequired": <DeclArray>
 	"ParameterOptional": <DeclArray>
 	"LocalVariable": <DeclArray>
+	"ExternVariableReference": <DeclArray>
 	"Statement": Array of <StatementObject>
 
 <StatementObject>:
@@ -91,6 +90,4 @@ For now: (Yes we won't even have branch yet, and there is no initializer for any
 	"LiteralValue": int/string
 	(VariableRead and VariableAddress Only)
 	"VariableName": string
-	(VariableRead Only)
-	"VariableReadType": ValTys
 

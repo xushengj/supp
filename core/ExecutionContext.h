@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "core/Value.h"
+#include "util/ADT.h"
 
 class DiagnosticEmitterBase;
 class OutputHandlerBase;
@@ -118,7 +119,7 @@ private:
 
     PtrCommon getPtrSrcHead(){
         PtrCommon result;
-        const auto& frame = *stack.top();
+        const auto& frame = stack.top();
         result.functionIndex = frame.functionIndex;
         result.activationIndex = frame.activationIndex;
         result.stmtIndex = frame.stmtIndex;
@@ -162,7 +163,7 @@ private:
     };
 
     // states
-    QStack<std::shared_ptr<CallStackEntry>> stack;
+    Stack<CallStackEntry> stack;
     QList<QVariant> globalVariables;
     QList<QList<QVariant>> nodeMembers;// read-writeable variables only; constant ones are still in IRNodeInstance
     QStack<TraverseState> nodeTraverseStack;

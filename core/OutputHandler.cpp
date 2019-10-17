@@ -20,14 +20,14 @@ void TextOutputHandler::getAllowedOutputTypeList(QList<ValueType>& tys) const
 
 bool TextOutputHandler::isOutputGoodSoFar()
 {
-    return encoder->hasFailure();
+    return !encoder->hasFailure();
 }
 
 bool TextOutputHandler::addOutput(const QString& data)
 {
     QByteArray out = encoder->fromUnicode(data);
     buffer.write(out);
-    return encoder->hasFailure();
+    return !encoder->hasFailure();
 }
 
 const QByteArray& TextOutputHandler::getResult()

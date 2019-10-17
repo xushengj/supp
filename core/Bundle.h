@@ -8,6 +8,7 @@
 class IRRootType;
 class IRRootInstance;
 class Task;
+class DiagnosticEmitterBase;
 
 // work in progress
 
@@ -22,9 +23,8 @@ public:
     const IRRootType& getIR(int irIndex)const{return *irTypes.at(irIndex);}
     const Task& getTask(int taskIndex)const{return *taskInfo.at(taskIndex).ptr;}
 
-    void readFromJson(const QByteArray& json);
-    void writeToJson(QByteArray& json);
-    IRRootInstance* readIRFromJson(int irIndex, const QByteArray& json);
+    static Bundle* fromJson(const QByteArray& json, DiagnosticEmitterBase& diagnostic);
+    IRRootInstance* readIRFromJson(int irIndex, const QByteArray& json, DiagnosticEmitterBase &diagnostic);
 
 private:
     struct TaskRecord{
@@ -38,9 +38,10 @@ private:
         int outputTypeIndex;//!< index in outputTypes if it writes External output, index in irTypes if it writes IR output
     };
     QList<OutputDescriptor> outputTypes;
-    QStringList outputNames;
     QList<IRRootType*> irTypes;
     QList<TaskRecord> taskInfo;
+    QHash<QString, int> irNameToIndex;      //!< IR name -> index in irTypes
+    QHash<QString, int> outputNameToIndex;  //!< Output name -> index in outputTypes
 };
 
 #endif // BUNDLE_H

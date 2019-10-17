@@ -103,11 +103,13 @@ class IRRootType
     Q_DECLARE_TR_FUNCTIONS(IRRootType)
     friend class IRNodeType;
 public:
+    explicit IRRootType(const QString& name)
+        : name(name)
+    {}
     // no copy or move because this class would be taken reference by others
     IRRootType(const IRRootType&) = delete;
     IRRootType(IRRootType&&) = delete;
 
-    void setName(const QString& str){isValidated = false; name = str;}
     void addNodeTypeDefinition(const IRNodeType& node){isValidated = false; nodeList.push_back(node);}
     void setRootNodeType(const QString& nodeName) {isValidated = false; rootNodeName = nodeName;}
 

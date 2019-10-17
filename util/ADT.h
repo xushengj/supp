@@ -3,10 +3,12 @@
 
 #include <QtGlobal>
 
+#include <deque>
 #include <memory>
 #include <stdexcept>
 #include <type_traits>
 
+// a run time sized array that can take both int and std::size_t index
 template<typename T,
          std::size_t EmbedArraySize = (64-sizeof(std::size_t)-sizeof(T* const))/sizeof(T),
          typename AllocTy = std::allocator<T>
@@ -58,6 +60,32 @@ private:
     const std::size_t count;
     T* const ptr;
     T array[EmbedArraySize];
+};
+
+
+// a stack that both provides int and std::size_t at() and stack interface (top(), push(), pop())
+template<typename T>
+class Stack: public std::deque<T>
+{
+public:
+    T& at(int index){
+        return std::deque<T>::at(static_cast<std::size_t>(index));
+    }
+    const T& at(int index)const{
+        return std::deque<T>::at(static_cast<std::size_t>(index));
+    }
+    T& top(){
+        return back();
+    }
+    const T& top() const{
+        return back();
+    }
+    void push(const T& v){
+        push_back(v);
+    }
+    void pop(){
+        pop_back();
+    }
 };
 
 #endif // ADT_H

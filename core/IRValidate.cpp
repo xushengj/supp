@@ -6,6 +6,7 @@
 #include <QtGlobal>
 #include <QObject>
 #include <QQueue>
+#include <QDebug>
 
 namespace{
 const char ILLEGAL_CHARS_1[] = {
@@ -47,9 +48,10 @@ bool IRNodeType::validateMemberName(DiagnosticEmitterBase& diagnostic, QString n
             isValid = false;
         }
     }
-    for(int i = 0, len = sizeof(ILLEGAL_CHARS_2)/sizeof(char); i < len; ++i){
+    for(int i = 0, len = sizeof(ILLEGAL_CHARS_2)/sizeof(EscapedIllegalCharRecord); i < len; ++i){
         QChar c(ILLEGAL_CHARS_2[i].c);
         if(Q_UNLIKELY(name.contains(c, Qt::CaseInsensitive))){
+            qDebug()<< ILLEGAL_CHARS_2[i].escapeChar << name;
             diagnostic.error(errorCategory,
                              tr("Name contains illegal character '\\%1'").arg(QString(ILLEGAL_CHARS_2[i].escapeChar)),
                              name);
@@ -267,7 +269,7 @@ bool IRNodeInstance::validate(DiagnosticEmitterBase& diagnostic, IRRootInstance&
     // non-fatal errors are tracked by isChildTypeGood
     for(int i = 0, cnt = childNodeList.size(); i < cnt; ++i){
         int childNodeIndex = childNodeList.at(i);
-        diagnostic.pushNode(tr("/[%1]%2").arg(i));
+        diagnostic.pushNode(tr("/[%1]%2").arg(i).arg("%1"));
         IRNodeInstance& child = root.getNode(childNodeIndex);
         bool isChildGood = child.validate(diagnostic, root);
         int localTyIndex = getLocalTypeIndex(child.getTypeIndex());

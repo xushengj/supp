@@ -9,13 +9,6 @@
 
 #include <functional>
 
-Function::~Function()
-{
-    for(ExpressionBase* ptr : exprList){
-        delete ptr;
-    }
-}
-
 bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
 {
     // POSSIBLE IMPROVEMENT:
@@ -261,7 +254,7 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
         branchStmtList.push_back(cooked);
     }
 
-    if(Q_UNLIKELY(paramCount < 0 || paramCount >= localVariableNames.size())){
+    if(Q_UNLIKELY(paramCount < 0 || paramCount > localVariableNames.size())){
         diagnostic.error(tr("Invalid value"),
                          tr("Number of parameter (%1) is invalid").arg(
                              QString::number(paramCount)

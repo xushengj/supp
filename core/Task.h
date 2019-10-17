@@ -7,10 +7,10 @@
 #include <memory>
 
 #include "core/Value.h"
+#include "core/Expression.h"
 
 class DiagnosticEmitterBase;
 class ExecutionContext;
-class ExpressionBase;
 class IRRootType;
 
 class Task;
@@ -82,7 +82,7 @@ class Function{
     Q_DECLARE_TR_FUNCTIONS(Function)
 public:
     explicit Function(QString name): functionName(name){}
-    ~Function();
+    ~Function(){}
     /**
      * @brief addLocalVariable add a local variable (or function formal argument) definition
      * @param name name of local variable to add
@@ -215,7 +215,7 @@ public:
     const QStringList getReferencedFunctions()const{return calledFunctions;}
 
 private:
-    QList<ExpressionBase*> exprList;
+    ExprList exprList;
     QList<Statement> stmtList;
     // unreachable statement do not have additional data
     QList<AssignmentStatement> assignStmtList;
@@ -271,6 +271,7 @@ public:
     int addFunction(const Function& f){
         int index = functions.size();
         functions.push_back(f);
+        functionNameToIndex.insert(f.getName(), index);
         return index;
     }
 
@@ -279,11 +280,12 @@ public:
         OnExit
     };
 
-    void setNodeCallback(int nodeIndex, int functionIndex, CallbackType ty){
+    void setNodeCallback(int nodeIndex, const QString& functionName, CallbackType ty){
         if(Q_UNLIKELY(nodeIndex < 0 || nodeIndex >= nodeCallbacks.size())){
             throw std::out_of_range("Bad node index");
         }
         NodeCallbackRecord& record = nodeCallbacks.back()[nodeIndex];
+        int functionIndex = getFunctionIndex(functionName);
         switch(ty){
         case CallbackType::OnEntry:
             record.onEntryFunctionIndex = functionIndex;
@@ -339,13 +341,7 @@ public:
 
     int getNumPass()const{return nodeCallbacks.size();}
     int getNumFunction()const{return functions.size();}
-    int getFunctionIndex(const QString& functionName)const{
-        auto iter = functionNameToIndex.find(functionName);
-        if(iter == functionNameToIndex.end()){
-            return -1;
-        }
-        return iter.value();
-    }
+    int getFunctionIndex(const QString& functionName)const{return functionNameToIndex.value(functionName, -1);}
     const Function& getFunction(int functionIndex)const{return functions.at(functionIndex);}
 
     bool validated() const {return isValidated;}

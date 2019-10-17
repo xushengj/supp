@@ -55,7 +55,7 @@ ExecutionContext::ExecutionContext(const Task& t, const IRRootInstance &root, Di
 bool ExecutionContext::read(const QString& name, ValueType& ty, QVariant& val)
 {
     Q_ASSERT(!stack.empty());
-    const auto& frame = *stack.top();
+    const auto& frame = stack.top();
 
     {
         int localVariableIndex = frame.f.getLocalVariableIndex(name);
@@ -108,7 +108,7 @@ bool ExecutionContext::read(const QString& name, ValueType& ty, QVariant& val)
 bool ExecutionContext::read(const ValuePtrType& valuePtr, ValueType& ty, QVariant& val)
 {
     Q_ASSERT(!stack.empty());
-    const auto& frame = *stack.top();// index is stack.size()-1
+    const auto& frame = stack.top();// index is stack.size()-1
 
     switch(valuePtr.ty){
     case ValuePtrType::PtrType::NullPointer:{
@@ -121,8 +121,8 @@ bool ExecutionContext::read(const ValuePtrType& valuePtr, ValueType& ty, QVarian
         int ptrAcivationIndex = valuePtr.head.activationIndex;
         if(frame.activationIndex != ptrAcivationIndex){
             // walk over the stack to see if the activation is still alive
-            for(int i = stack.size()-2; i >= 0; ++i){
-                const auto& curFrame = *stack.at(i);
+            for(int i = static_cast<int>(stack.size())-2; i >= 0; ++i){
+                const auto& curFrame = stack.at(i);
                 if(curFrame.activationIndex == ptrAcivationIndex){
                     // okay we found it
                     ty = curFrame.f.getLocalVariableType(valuePtr.valueIndex);
@@ -202,7 +202,7 @@ void ExecutionContext::checkUninitializedRead(ValueType ty, QVariant& readVal)
 bool ExecutionContext::takeAddress(const QString& name, ValuePtrType& val)
 {
     Q_ASSERT(!stack.empty());
-    const auto& frame = *stack.top();
+    const auto& frame = stack.top();
 
     val.head = getPtrSrcHead();
     {
@@ -255,7 +255,7 @@ bool ExecutionContext::takeAddress(const QString& name, ValuePtrType& val)
 bool ExecutionContext::write(const QString& name, const ValueType& ty, const QVariant& val)
 {
     Q_ASSERT(!stack.empty());
-    auto& frame = *stack.top();
+    auto& frame = stack.top();
     ValueType actualTy = ValueType::Void;
     QVariant* valPtr = nullptr;
 
@@ -317,7 +317,7 @@ bool ExecutionContext::write(const QString& name, const ValueType& ty, const QVa
 bool ExecutionContext::write(const ValuePtrType& valuePtr, const ValueType& ty, const QVariant& dest)
 {
     Q_ASSERT(!stack.empty());
-    auto& frame = *stack.top();// index is stack.size()-1
+    auto& frame = stack.top();// index is stack.size()-1
     ValueType actualTy = ValueType::Void;
     QVariant* valPtr = nullptr;
 
@@ -332,8 +332,8 @@ bool ExecutionContext::write(const ValuePtrType& valuePtr, const ValueType& ty, 
         int ptrAcivationIndex = valuePtr.head.activationIndex;
         if(frame.activationIndex != ptrAcivationIndex){
             // walk over the stack to see if the activation is still alive
-            for(int i = stack.size()-2; i >= 0; ++i){
-                auto& curFrame = *stack[i];
+            for(int i = static_cast<int>(stack.size())-2; i >= 0; ++i){
+                auto& curFrame = stack.at(i);
                 if(curFrame.activationIndex == ptrAcivationIndex){
                     // okay we found it
                     actualTy = curFrame.f.getLocalVariableType(valuePtr.valueIndex);
@@ -386,7 +386,7 @@ bool ExecutionContext::getCurrentNodePtr(NodePtrType& result)
 {
     Q_ASSERT(!stack.empty());
     result.head = getPtrSrcHead();
-    result.nodeIndex = stack.top()->irNodeIndex;
+    result.nodeIndex = stack.top().irNodeIndex;
     return true;
 }
 
@@ -526,10 +526,11 @@ void ExecutionContext::mainExecutionEntry()
 void ExecutionContext::nodeTraverseEntry(int passIndex, int nodeIndex)
 {
     const IRNodeInstance& inst = root.getNode(nodeIndex);
-    const IRNodeType& ty = root.getType().getNodeType(inst.getTypeIndex());
+    int nodeTypeIndex = inst.getTypeIndex();
+    const IRNodeType& ty = root.getType().getNodeType(nodeTypeIndex);
     diagnostic.attachDescriptiveName(ty.getName());
-    int entryCB = t.getNodeCallback(nodeIndex, Task::CallbackType::OnEntry, passIndex);
-    int exitCB = t.getNodeCallback(nodeIndex, Task::CallbackType::OnExit, passIndex);
+    int entryCB = t.getNodeCallback(nodeTypeIndex, Task::CallbackType::OnEntry, passIndex);
+    int exitCB = t.getNodeCallback(nodeTypeIndex, Task::CallbackType::OnExit, passIndex);
 
     if(entryCB >= 0){
         diagnostic.pushNode(tr("|Entry %1"));
@@ -560,24 +561,23 @@ void ExecutionContext::pushFunctionStackframe(int functionIndex, int nodeIndex, 
     // (just for performance)
     const Function& f = t.getFunction(functionIndex);
     if(f.getNumStatement() > 0){
-        CallStackEntry* entry = new CallStackEntry(f, functionIndex, nodeIndex, root.getNode(nodeIndex).getTypeIndex(), activationIndex);
+        CallStackEntry entry(f, functionIndex, nodeIndex, root.getNode(nodeIndex).getTypeIndex(), activationIndex);
         int localVariableCnt = f.getNumLocalVariable();
-        entry->localVariables.reserve(localVariableCnt);
+        entry.localVariables.reserve(localVariableCnt);
         for(int i = 0; i < localVariableCnt; ++i){
-            entry->localVariables.push_back(f.getLocalVariableInitializer(i));
+            entry.localVariables.push_back(f.getLocalVariableInitializer(i));
         }
         for(int i = 0, num = params.size(); i < num; ++i){
-            entry->localVariables[i] = params.at(i);
+            entry.localVariables[i] = params.at(i);
         }
-        std::shared_ptr<CallStackEntry> ptr(entry);
-        stack.push(ptr);
+        stack.push(entry);
     }
 }
 
 void ExecutionContext::functionMainLoop()
 {
     while(!stack.empty()){
-        auto& frame = *stack.top();
+        auto& frame = stack.top();
         if(frame.stmtIndex >= frame.f.getNumStatement()){
             // implicit return
             Q_ASSERT(frame.stmtIndex == frame.f.getNumStatement());
@@ -785,7 +785,7 @@ void ExecutionContext::functionMainLoop()
 bool ExecutionContext::evaluateExpression(int expressionIndex, int stmtIndex, ValueType& ty, QVariant& val)
 {
     Q_ASSERT(!stack.empty());
-    const auto& frame = *stack.top();
+    const auto& frame = stack.top();
 
     const ExpressionBase* expr = frame.f.getExpression(expressionIndex);
     QList<int> dependencies;
