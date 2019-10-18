@@ -1,4 +1,5 @@
-#include "DocumentEdit.h"
+#include "ui/DocumentEdit.h"
+
 #include <QFontMetrics>
 #include <QPainter>
 #include <QTextBlock>

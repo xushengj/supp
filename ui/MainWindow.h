@@ -4,6 +4,8 @@
 #include <QtGlobal>
 #include <QMainWindow>
 #include <QTabWidget>
+#include <QTabBar>
+#include <QEvent>
 
 #include "ui/DocumentWidget.h"
 
@@ -22,6 +24,7 @@ public:
 protected:
     void focusInEvent(QFocusEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 public slots:
     void newRequested();
@@ -84,4 +87,30 @@ private:
     QString lastSavePath;
     QString lastOpenPath;
 };
+
+class ForwardingTabBar: public QTabBar
+{
+    Q_OBJECT
+
+public:
+    ForwardingTabBar(QWidget* parent = nullptr)
+        : QTabBar(parent)
+    {}
+
+    void setFilter(QObject* filterObj){installEventFilter(filterObj);}
+};
+
+class ForwardingTabWidget : public QTabWidget
+{
+    Q_OBJECT
+
+public:
+    ForwardingTabWidget(QWidget* parent = nullptr)
+        : QTabWidget(parent)
+    {
+        setTabBar(new ForwardingTabBar(nullptr));
+    }
+    void setTabBarEventFilter(QObject* filterObj){qobject_cast<ForwardingTabBar*>(tabBar())->setFilter(filterObj);}
+};
+
 #endif // MAINWINDOW_H

@@ -1,9 +1,14 @@
-#include "MainWindow.h"
+#include "ui/MainWindow.h"
 #include "ui_MainWindow.h"
-#include "DocumentWidget.h"
+
+#include "ui/DocumentWidget.h"
+
+#include <QtGlobal>
 #include <QMessageBox>
 #include <QFileDialog>
-#include <QtGlobal>
+#include <QCloseEvent>
+#include <QTabBar>
+#include <QDebug>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -12,7 +17,8 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
-    tabWidget = new QTabWidget;
+    ForwardingTabWidget* tab = new ForwardingTabWidget(this);
+    tabWidget = tab;
     tabWidget->setMovable(true);
     tabWidget->setTabsClosable(true);
     ui->centralwidget->layout()->addWidget(tabWidget);
@@ -32,6 +38,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->actionClose, &QAction::triggered, this, &MainWindow::closeRequested);
 
     setFocusPolicy(Qt::StrongFocus);
+    tab->setTabBarEventFilter(this);
 }
 
 MainWindow::~MainWindow()
@@ -41,8 +48,8 @@ MainWindow::~MainWindow()
 
 void MainWindow::focusInEvent(QFocusEvent *event)
 {
-    Q_UNUSED(event)
-    getCurrentDocumentWidget()->fileRecheckRequested();
+    getCurrentDocumentWidget()->checkFileUpdate();
+    QMainWindow::focusInEvent(event);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -53,6 +60,36 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 
     QMainWindow::closeEvent(event);
+}
+
+bool MainWindow::eventFilter(QObject *obj, QEvent *event)
+{
+    // return false to pass through the event and true to intercept it
+
+    // get right click event on tab
+    if(obj == static_cast<QObject*>(tabWidget->tabBar())){
+        if(event->type() == QEvent::MouseButtonPress){
+            QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+            QPoint pos = mouseEvent->pos();
+            int index = tabWidget->currentIndex();
+            for(int i = 0, num = tabWidget->count(); i < num; ++i){
+                if(tabWidget->tabBar()->tabRect(i).contains(pos)){
+                    index = i;
+                    break;
+                }
+            }
+            if(mouseEvent->button() == Qt::RightButton){
+                QMenu* menu = getDocumentWidget(index)->getMenu();
+                if(menu){
+                    menu->exec(mouseEvent->globalPos());
+                    delete menu;
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
 }
 
 void MainWindow::installNewDocumentWidget(DocumentWidget* doc)
@@ -72,7 +109,7 @@ void MainWindow::installNewDocumentWidget(DocumentWidget* doc)
 
 void MainWindow::newRequested()
 {
-    installNewDocumentWidget(new DocumentWidget(QString()));
+    installNewDocumentWidget(DocumentWidget::createInstance(QString()));
 }
 
 void MainWindow::openRequested()
@@ -92,28 +129,30 @@ void MainWindow::openRequested()
         return;
     }
 
-    bool isReusingDoc = false;
+    // if there is only one document opening and it is not associated with any file yet, remove that page after opening the specified document
+    DocumentWidget* docToDelete = nullptr;
+
     if(tabWidget->count() == 1){
-        doc = getCurrentDocumentWidget();
-        if(doc->getAbsoluteFilePath().isEmpty() && doc->isEmpty()){
-            doc->reassociate(path);
-            isReusingDoc = true;
+        DocumentWidget* curDoc = getCurrentDocumentWidget();
+        if(curDoc->getAbsoluteFilePath().isEmpty() && curDoc->isEmpty()){
+            docToDelete = curDoc;
         }
     }
-    if(!isReusingDoc){
-        doc = new DocumentWidget(path);
-    }
+
+    doc = DocumentWidget::createInstance(path);
 
     if(doc->getAbsoluteFilePath().isEmpty()){
         QMessageBox::warning(this, tr("Open fail"), tr("Specified file cannot be opened"));
-        if(!isReusingDoc){
-            delete doc;
-        }
+        delete doc;
         return;
     }
 
-    if(!isReusingDoc)
-        installNewDocumentWidget(doc);
+    installNewDocumentWidget(doc);
+
+    if(docToDelete){
+        tabWidget->removeTab(tabWidget->indexOf(docToDelete));
+        docToDelete->deleteLater();
+    }
 
     updateTitle();
 }
@@ -137,13 +176,13 @@ void MainWindow::handleCloseDocument(DocumentWidget* doc)
     }
 
     // trying to remove the last widget will cause a crash
-    if(tabWidget->count() > 1){
-        tabWidget->removeTab(tabWidget->indexOf(doc));
-        doc->deleteLater();
-    }else{
+    // create a new one first if this is the case
+    if(tabWidget->count() <= 1){
         Q_ASSERT(static_cast<QWidget*>(doc) == tabWidget->currentWidget());
-        doc->reassociate(QString());
+        newRequested();
     }
+    tabWidget->removeTab(tabWidget->indexOf(static_cast<QWidget*>(doc)));
+    doc->deleteLater();
 }
 
 void MainWindow::updateTitle()
@@ -157,7 +196,7 @@ void MainWindow::updateTitle()
 
 void MainWindow::fileCheckRelaySlot(int index)
 {
-    getDocumentWidget(index)->fileRecheckRequested();
+    getDocumentWidget(index)->checkFileUpdate();
 }
 
 bool MainWindow::closeWindowConfirmation()

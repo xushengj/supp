@@ -25,11 +25,13 @@ SOURCES += \
     core/Task.cpp \
     ui/DocumentEdit.cpp \
     ui/DocumentWidget.cpp \
+    ui/PlainTextDocumentWidget.cpp \
     ui/main.cpp \
     ui/MainWindow.cpp
 
 HEADERS += \
     core/CLIDriver.h \
+    ui/PlainTextDocumentWidget.h \
     util/ADT.h \
     core/Bundle.h \
     core/ExecutionContext.h \
