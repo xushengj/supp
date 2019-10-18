@@ -29,7 +29,7 @@ const EscapedIllegalCharRecord ILLEGAL_CHARS_2[] = {
 };
 }
 
-bool IRNodeType::validateMemberName(DiagnosticEmitterBase& diagnostic, QString name)
+bool IRNodeType::validateMemberName(DiagnosticEmitterBase& diagnostic, const QString &name)
 {
     // any character sequence is allowed, except ones in ILLEGAL_CHARS
     bool isValid = true;
@@ -48,7 +48,7 @@ bool IRNodeType::validateMemberName(DiagnosticEmitterBase& diagnostic, QString n
             isValid = false;
         }
     }
-    for(int i = 0, len = sizeof(ILLEGAL_CHARS_2)/sizeof(EscapedIllegalCharRecord); i < len; ++i){
+    for(int i = 0, len = sizeof(ILLEGAL_CHARS_2)/sizeof(decltype(ILLEGAL_CHARS_2[0])); i < len; ++i){
         QChar c(ILLEGAL_CHARS_2[i].c);
         if(Q_UNLIKELY(name.contains(c, Qt::CaseInsensitive))){
             qDebug()<< ILLEGAL_CHARS_2[i].escapeChar << name;
@@ -145,7 +145,7 @@ bool  IRNodeType::validate(DiagnosticEmitterBase& diagnostic, IRRootType &root)
     childNodeNameToIndex.clear();
     for(int i = 0, len = childNodeList.size(); i < len; ++i){
         const QString& str = childNodeList.at(i);
-        int index = root.getNodeIndex(str);
+        int index = root.getNodeTypeIndex(str);
         if(Q_UNLIKELY(index == -1)){
             diagnostic.error(tr("Invalid name reference"),
                              tr("Specified child node name do not exist"),
@@ -193,7 +193,7 @@ bool IRRootType::validate(DiagnosticEmitterBase& diagnostic)
     if(rootNodeName.isEmpty()){
         rootNodeIndex = -1;
     }else{
-        rootNodeIndex = getNodeIndex(rootNodeName);
+        rootNodeIndex = getNodeTypeIndex(rootNodeName);
         if(Q_UNLIKELY(rootNodeIndex == -1)){
             diagnostic.error(tr("Invalid name reference"),
                              tr("Specified root node name do not exist"),
@@ -254,7 +254,7 @@ bool IRNodeInstance::validate(DiagnosticEmitterBase& diagnostic, IRRootInstance&
 
     childNodeTypeIndexToLocalIndex.clear();
     for(int i = 0; i < numChildNodeType; ++i){
-        int globalNodeTyIndex = rootTy.getNodeIndex(ty.getChildNodeName(i));
+        int globalNodeTyIndex = rootTy.getNodeTypeIndex(ty.getChildNodeName(i));
         childNodeTypeIndexToLocalIndex.insert(globalNodeTyIndex, i);
     }
     childTypeList.clear();
@@ -296,7 +296,7 @@ bool IRNodeInstance::validate(DiagnosticEmitterBase& diagnostic, IRRootInstance&
             if(Q_LIKELY(isChildTypeGood.at(i))){
                 ChildTypeRecord& record = childTypeList[i];
                 record.perParamHash.clear();
-                const IRNodeType& nodeTy = rootTy.getNodeType(rootTy.getNodeIndex(ty.getChildNodeName(i)));
+                const IRNodeType& nodeTy = rootTy.getNodeType(rootTy.getNodeTypeIndex(ty.getChildNodeName(i)));
                 for(int i = 0, numParam = nodeTy.getNumParameter(); i < numParam; ++i){
                     record.perParamHash.push_back(QHash<QVariant,int>());
                     if(nodeTy.getParameterIsUnique(i)){
@@ -407,8 +407,9 @@ bool IRRootInstance::validate(DiagnosticEmitterBase& diagnostic)
 
         isValidated = isValidated && isCurrentNodeGood;
         if(Q_LIKELY(isCurrentNodeGood)){
-            for(int child : child.childNodeList){
-                pendingNodes.enqueue(Entry{currentIndex, child});
+            for(int i = 0, num = child.getNumChildNode(); i < num; ++i){
+                int childIndex = child.getChildNodeByOrder(i);
+                pendingNodes.enqueue(Entry{currentIndex, childIndex});
             }
         }
     }

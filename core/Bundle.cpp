@@ -99,7 +99,7 @@ ValueType getValueTypeFromString(DiagnosticEmitterBase& diagnostic, const QStrin
     throw std::runtime_error("Unknown type");
 }
 
-int getExpression(DiagnosticEmitterBase& diagnostic, const QJsonObject& json, Function& f, const QHash<QString, ValueType>& extVarRefTyHash)
+int getExpression(DiagnosticEmitterBase& diagnostic, const QJsonObject& json, Function& f)
 {
     Q_UNUSED(f)
     QString exprTy = json.value(STR_EXPR_TYPE).toString();
@@ -118,7 +118,21 @@ int getExpression(DiagnosticEmitterBase& diagnostic, const QJsonObject& json, Fu
         }
     }else if(exprTy == STR_EXPR_TYPE_VAR_READ){
         QString name = json.value(STR_EXPR_VAR_NAME).toString();
-        return f.addExpression(new VariableReadExpression(extVarRefTyHash.value(name, ValueType::Void), name));
+        ValueType ty = ValueType::Void;
+        int refIndex = f.getLocalVariableIndex(name);
+        if(refIndex >= 0){
+            ty = f.getLocalVariableType(refIndex);
+        }else{
+            refIndex = f.getExternVariableIndex(name);
+            if(Q_UNLIKELY(refIndex == -1)){
+                diagnostic.error(QString(),
+                                 Bundle::tr("Reference to unknown variable"),
+                                 name);
+                throw std::runtime_error("Unknown variable");
+            }
+            ty = f.getExternVariableType(refIndex);
+        }
+        return f.addExpression(new VariableReadExpression(ty, name));
     }else if(exprTy == STR_EXPR_TYPE_VAR_ADDR){
         QString name = json.value(STR_EXPR_VAR_NAME).toString();
         return f.addExpression(new VariableAddressExpression(name));
@@ -170,7 +184,6 @@ Function getFunction(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
     QString name = json.value(STR_NAME).toString();
     diagnostic.pushNode(name);
     Function func(name);
-    QHash<QString, ValueType> extVarRefTyHash;
     // parameters and local variables
     {
         QList<MemberDeclarationEntry> vars;
@@ -194,7 +207,7 @@ Function getFunction(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
         vars.clear();
         getMemberDeclaration(diagnostic, json.value(STR_FUNCTION_EXTVARREF).toArray(), vars);
         for(const auto& record : vars){
-            extVarRefTyHash.insert(record.name, record.ty);
+            func.addExternVariable(record.name, record.ty);
         }
         vars.clear();
     }
@@ -212,20 +225,20 @@ Function getFunction(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
                 stmt.lvalueName = lhs.toString();
                 stmt.lvalueExprIndex = -1;
             }else{
-                stmt.lvalueExprIndex = getExpression(diagnostic, lhs.toObject(), func, extVarRefTyHash);
+                stmt.lvalueExprIndex = getExpression(diagnostic, lhs.toObject(), func);
             }
-            stmt.rvalueExprIndex = getExpression(diagnostic, obj.value(STR_STMT_ASSIGN_RHS).toObject(), func, extVarRefTyHash);
+            stmt.rvalueExprIndex = getExpression(diagnostic, obj.value(STR_STMT_ASSIGN_RHS).toObject(), func);
             func.addStatement(stmt);
         }else if(stmtTy == STR_STMT_OUTPUT){
             OutputStatement stmt;
-            stmt.exprIndex = getExpression(diagnostic, obj.value(STR_STMT_OUTPUT_EXPR).toObject(), func, extVarRefTyHash);
+            stmt.exprIndex = getExpression(diagnostic, obj.value(STR_STMT_OUTPUT_EXPR).toObject(), func);
             func.addStatement(stmt);
         }else if(stmtTy == STR_STMT_CALL){
             CallStatement stmt;
             stmt.functionName = obj.value(STR_STMT_CALL_FUNC).toString();
             QJsonArray args = obj.value(STR_STMT_CALL_ARG).toArray();
             for(auto iter = args.begin(), iterEnd = args.end(); iter != iterEnd; ++iter){
-                stmt.argumentExprList.push_back(getExpression(diagnostic, iter->toObject(), func, extVarRefTyHash));
+                stmt.argumentExprList.push_back(getExpression(diagnostic, iter->toObject(), func));
             }
             func.addStatement(stmt);
         }else if(stmtTy == STR_STMT_RETURN){
@@ -255,7 +268,7 @@ Function getFunction(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
             for(auto iter = caseArray.begin(), iterEnd = caseArray.end(); iter != iterEnd; ++iter){
                 BranchStatementTemp::BranchCase c;
                 QJsonObject caseObj = iter->toObject();
-                c.exprIndex = getExpression(diagnostic, caseObj.value(STR_STMT_BRANCH_COND).toObject(), func, extVarRefTyHash);
+                c.exprIndex = getExpression(diagnostic, caseObj.value(STR_STMT_BRANCH_COND).toObject(), func);
                 setAction(caseObj.value(STR_STMT_BRANCH_ACT).toObject(), c.action, c.labelName);
                 stmt.cases.push_back(c);
             }
@@ -403,7 +416,7 @@ Bundle* Bundle::fromJson(const QByteArray& json, DiagnosticEmitterBase &diagnost
             QJsonObject nodeMember = obj.value(STR_TASK_NODEMEMBER).toObject();
             for(auto iter = nodeMember.begin(), iterEnd = nodeMember.end(); iter != iterEnd; ++iter){
                 QString nodeName = iter.key();
-                int nodeIndex = irRoot.getNodeIndex(nodeName);
+                int nodeIndex = irRoot.getNodeTypeIndex(nodeName);
                 if(Q_UNLIKELY(nodeIndex < 0)){
                     diagnostic.error(QString(),
                                      tr("Unknown node name"),
@@ -422,7 +435,7 @@ Bundle* Bundle::fromJson(const QByteArray& json, DiagnosticEmitterBase &diagnost
                 taskPtr->addNewPass();
                 for(auto iter = passObj.begin(), iterEnd = passObj.end(); iter != iterEnd; ++iter){
                     QString nodeName = iter.key();
-                    int nodeIndex = irRoot.getNodeIndex(nodeName);
+                    int nodeIndex = irRoot.getNodeTypeIndex(nodeName);
                     if(Q_UNLIKELY(nodeIndex < 0)){
                         diagnostic.error(QString(),
                                          tr("Unknown node name"),
@@ -467,7 +480,7 @@ IRRootInstance* Bundle::readIRFromJson(int irIndex, const QByteArray& json, Diag
         for(auto iter = nodeArray.begin(), iterEnd = nodeArray.end(); iter != iterEnd; ++iter){
             QJsonObject node = iter->toObject();
             QString nodeTypeName = node.value(STR_TYPE).toString();
-            int typeIndex = rootTy.getNodeIndex(nodeTypeName);
+            int typeIndex = rootTy.getNodeTypeIndex(nodeTypeName);
             int nodeIndex = ptr->addNode(typeIndex);
             IRNodeInstance& inst = ptr->getNode(nodeIndex);
             int parentIndex = node.value(STR_INSTANCE_PARENT).toInt();

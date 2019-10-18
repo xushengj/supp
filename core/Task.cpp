@@ -23,9 +23,113 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
         isValidated = false;
     }
 
+    // check if extern variable reference is good
+    // (i.e. no name conflict)
+    // for now we do not attempt to check if the name resolve to given type, because it requires runtime data
+    Q_ASSERT(externVariableNameList.size() == externVariableTypeList.size());
+    for(int i = 0, num = externVariableNameList.size(); i < num; ++i){
+        // check if searching for this name result in the correct index
+        const QString& varName = externVariableNameList.at(i);
+        int searchResult = externVariableNameToIndex.value(varName, -1);
+        if(Q_UNLIKELY(searchResult != i)){
+            diagnostic.error(tr("Name conflict"),
+                             tr("Multiple extern variable reference with the same name"),
+                             varName);
+            isValidated = false;
+        }
+        // no void extern reference
+        ValueType expectedTy = externVariableTypeList.at(i);
+        if(Q_UNLIKELY(expectedTy == ValueType::Void)){
+            diagnostic.error(tr("Bad type"),
+                             tr("Extern variable cannot be void type"),
+                             varName);
+            isValidated = false;
+        }
+    }
+    if(Q_UNLIKELY(externVariableNameToIndex.size() != externVariableNameList.size())){
+        diagnostic.error(tr("Name conflict"),
+                         tr("Total number of unique extern variable names (%1) is less than number of extern variables (%2)").arg(
+                             QString::number(externVariableNameToIndex.size()),
+                             QString::number(externVariableNameList.size()))
+                         );
+        isValidated = false;
+    }
+
+
+    // check if local variables are good
+    if(Q_UNLIKELY(paramCount < 0 || paramCount > localVariableNames.size())){
+        diagnostic.error(tr("Invalid value"),
+                         tr("Number of parameter (%1) is invalid").arg(
+                             QString::number(paramCount)
+                           )
+                         );
+        isValidated = false;
+    }
+
+    if(Q_UNLIKELY(requiredParamCount < 0 || requiredParamCount > paramCount)){
+        diagnostic.error(tr("Invalid value"),
+                         tr("Number of required parameter (%1) is invalid").arg(
+                             QString::number(requiredParamCount)
+                           )
+                         );
+        isValidated = false;
+    }else{
+        // the rest of parameters should all have default initializer
+        for(int i = requiredParamCount+1; i < qMin(paramCount, localVariableInitializer.size()); ++i){
+            if(Q_UNLIKELY(!localVariableInitializer.at(i).isValid())){
+                diagnostic.error(tr("Missing initializer"),
+                                 tr("Optional parameter %1(%2) do not have an initializer").arg(
+                                     QString::number(i),
+                                     localVariableNames.at(i)));
+                isValidated = false;
+            }
+        }
+    }
+
+    localVariableNameToIndex.clear();
+    for(int i = 0, num = localVariableNames.size(); i < num; ++i){
+        const QString& name = localVariableNames.at(i);
+        if(Q_UNLIKELY(!IRNodeType::validateMemberName(diagnostic, name))){
+            isValidated = false;
+        }else{
+            auto iter = localVariableNameToIndex.find(name);
+            if(Q_LIKELY(iter == localVariableNameToIndex.end())){
+                localVariableNameToIndex.insert(name, i);
+
+                // no void local variables
+                ValueType expectedTy = localVariableTypes.at(i);
+                if(Q_UNLIKELY(expectedTy == ValueType::Void)){
+                    diagnostic.error(tr("Bad type"),
+                                     tr("Local variable cannot be void type"),
+                                     name);
+                    isValidated = false;
+                }
+
+                // check if the initializer is good
+                const QVariant& initializer = localVariableInitializer.at(i);
+                if(initializer.isValid()){
+                    ValueType initTy = getValueType(static_cast<QMetaType::Type>(initializer.userType()));
+                    if(Q_UNLIKELY(initTy != expectedTy)){
+                        diagnostic.error(tr("Type mismatch"),
+                                         tr("Local variable is in type %1 but initializer is in type %2").arg(
+                                             getTypeNameString(expectedTy),
+                                             getTypeNameString(initTy)));
+                        isValidated = false;
+                    }
+                }
+            }else{
+                diagnostic.error(tr("Name conflict"),
+                                 tr("More than one local variable with the same name"),
+                                 name);
+                isValidated = false;
+            }
+        }
+    }
+
     // check if all expressions are good
     // 1. no circular dependence (just check if any expression is referencing another expression with larger index)
     // 2. type expectation should match
+    // 3. if the expression need to reference variable by name, the name should either appear in local variable or in extern variable list
     QString exprCheckFailCommonPrefix = tr("During checking expression %1: dependent expression %2: %3");
     for(int index = 0, len = exprList.size(); index < len; ++index){
         const ExpressionBase* ptr = exprList.at(index);
@@ -57,6 +161,20 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
                                        )
                                      );
                     isValidated = false;
+                }
+                QList<QString> nameReference;
+                ptr->getVariableNameReference(nameReference);
+                if(!nameReference.empty()){
+                    for(const auto& name : nameReference){
+                        if(localVariableNameToIndex.value(name, -1) == -1){
+                            if(Q_UNLIKELY(externVariableNameToIndex.value(name, -1) == -1)){
+                                diagnostic.error(tr("Invalid reference"),
+                                                 tr("Unknown variable reference by expression"),
+                                                 name);
+                                isValidated = false;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -159,8 +277,8 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
                                          );
                         isValidated = false;
                     }else{
-                        QString paramName;
-                        ValueType expectedTy = f.getLocalVariableType(i,&paramName);
+                        QString paramName = f.getLocalVariableName(i);
+                        ValueType expectedTy = f.getLocalVariableType(i);
                         ValueType actualTy = exprList.at(exprIndex)->getExpressionType();
                         if(Q_UNLIKELY(expectedTy != actualTy)){
                             diagnostic.error(tr("Type mismatch"),
@@ -252,67 +370,6 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
             }
         }
         branchStmtList.push_back(cooked);
-    }
-
-    if(Q_UNLIKELY(paramCount < 0 || paramCount > localVariableNames.size())){
-        diagnostic.error(tr("Invalid value"),
-                         tr("Number of parameter (%1) is invalid").arg(
-                             QString::number(paramCount)
-                           )
-                         );
-        isValidated = false;
-    }
-
-    if(Q_UNLIKELY(requiredParamCount < 0 || requiredParamCount > paramCount)){
-        diagnostic.error(tr("Invalid value"),
-                         tr("Number of required parameter (%1) is invalid").arg(
-                             QString::number(requiredParamCount)
-                           )
-                         );
-        isValidated = false;
-    }else{
-        // the rest of parameters should all have default initializer
-        for(int i = requiredParamCount+1; i < qMin(paramCount, localVariableInitializer.size()); ++i){
-            if(Q_UNLIKELY(!localVariableInitializer.at(i).isValid())){
-                diagnostic.error(tr("Missing initializer"),
-                                 tr("Optional parameter %1(%2) do not have an initializer").arg(
-                                     QString::number(i),
-                                     localVariableNames.at(i)));
-                isValidated = false;
-            }
-        }
-    }
-
-    localVariableNameToIndex.clear();
-    for(int i = 0, num = localVariableNames.size(); i < num; ++i){
-        const QString& name = localVariableNames.at(i);
-        if(Q_UNLIKELY(!IRNodeType::validateMemberName(diagnostic, name))){
-            isValidated = false;
-        }else{
-            auto iter = localVariableNameToIndex.find(name);
-            if(Q_LIKELY(iter == localVariableNameToIndex.end())){
-                localVariableNameToIndex.insert(name, i);
-
-                // check if the initializer is good
-                const QVariant& initializer = localVariableInitializer.at(i);
-                if(initializer.isValid()){
-                    ValueType initTy = getValueType(static_cast<QMetaType::Type>(initializer.userType()));
-                    ValueType expectedTy = localVariableTypes.at(i);
-                    if(Q_UNLIKELY(initTy != expectedTy)){
-                        diagnostic.error(tr("Type mismatch"),
-                                         tr("Local variable is in type %1 but initializer is in type %2").arg(
-                                             getTypeNameString(expectedTy),
-                                             getTypeNameString(initTy)));
-                        isValidated = false;
-                    }
-                }
-            }else{
-                diagnostic.error(tr("Name conflict"),
-                                 tr("More than one local variable with the same name"),
-                                 name);
-                isValidated = false;
-            }
-        }
     }
 
     return isValidated;
@@ -482,7 +539,7 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
     while(!reachableFunctions.empty()){
         int index = reachableFunctions.dequeue();
         const Function& f = functions.at(index);
-        const auto& list = f.getReferencedFunctions();
+        const auto& list = f.getReferencedFunctionList();
         for(const auto& str : list){
             int index = getFunctionIndex(str);
             tryEnqueue(index);

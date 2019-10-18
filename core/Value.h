@@ -9,7 +9,7 @@
 class DiagnosticEmitterBase;
 
 enum class ValueType{
-    Void,       //!< runtime only; not for IR
+    Void,       //!< runtime only; not for IR; basically just used to mark invalid type
     NodePtr,    //!< runtime only; not for IR; node index in IRRootInstance stored as int
     ValuePtr,   //!< runtime only; not for IR
     String,

@@ -26,6 +26,13 @@ public:
     virtual ExpressionBase* clone() const = 0;
 
     virtual ValueType getExpressionType() const = 0;
+
+    /**
+     * @brief getVariableNameReference populates a list of variable names that resolving this expression would need to lookup
+     * @param name the list of variable names to populate
+     */
+    virtual void getVariableNameReference(QList<QString>& name) const {Q_UNUSED(name)}
+
     /**
      * @brief getDependency get list of expression indices that this expression depends upon
      * @param dependentExprIndexList
@@ -114,6 +121,7 @@ public:
     virtual ~VariableAddressExpression() override {}
     virtual VariableAddressExpression* clone() const override{return new VariableAddressExpression(variableName);}
     virtual ValueType getExpressionType() const override {return ValueType::ValuePtr;}
+    virtual void getVariableNameReference(QList<QString>& name) const override {name.push_back(variableName);}
     virtual bool evaluate(ExecutionContext& ctx, QVariant& retVal, const QList<QVariant>& dependentExprResults) const override;
 private:
     QString variableName;
@@ -133,6 +141,7 @@ public:
     virtual ~VariableReadExpression() override {}
     virtual VariableReadExpression* clone() const override {return new VariableReadExpression(ty, variableName);}
     virtual ValueType getExpressionType() const override {return ty;}
+    virtual void getVariableNameReference(QList<QString>& name) const override {name.push_back(variableName);}
     virtual bool evaluate(ExecutionContext& ctx, QVariant& retVal, const QList<QVariant>& dependentExprResults) const override;
 private:
     ValueType ty;

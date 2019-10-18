@@ -83,6 +83,49 @@ class Function{
 public:
     explicit Function(QString name): functionName(name){}
     ~Function(){}
+
+    //-------------------------------------------------------------------------
+    // const interface
+
+    const QString& getName()const{return functionName;}
+
+    int getNumExternVariableUsed()                          const {return externVariableNameList.size();}
+    int       getExternVariableIndex(const QString& name)   const {return externVariableNameToIndex.value(name, -1);}
+    ValueType getExternVariableType(int externVarIndex)     const {return externVariableTypeList.at(externVarIndex);}
+    ValueType getExternVariableType(const QString& name)    const {return externVariableTypeList.at(externVariableNameToIndex.value(name, -1));}
+
+    // note that function parameter is implicitly a local variable
+    // (local variable count >= total parameter count >= required parameter count)
+    int getNumParameter()           const {return paramCount;}
+    int getNumRequiredParameter()   const {return requiredParamCount;}
+
+    int getNumLocalVariable() const {return localVariableNames.size();}
+
+    int             getLocalVariableIndex       (const QString& varName)    const {return localVariableNameToIndex.value(varName, -1);}
+    const QString&  getLocalVariableName        (int localVarIndex)         const {return localVariableNames.at(localVarIndex);}
+    ValueType       getLocalVariableType        (int localVarIndex)         const {return localVariableTypes.at(localVarIndex);}
+    const QVariant& getLocalVariableInitializer (int localVarIndex)         const {return localVariableInitializer.at(localVarIndex);}
+
+    int getNumExpression()  const {return exprList.size();}
+    int getNumStatement()   const {return stmtList.size();}
+
+    const ExpressionBase* getExpression(int exprIndex) const {return exprList.at(exprIndex);}
+
+    const Statement&            getStatement            (int stmtIndex)         const {return stmtList.at(stmtIndex);}
+    const AssignmentStatement&  getAssignmentStatement  (int assignStmtIndex)   const {return assignStmtList.at(assignStmtIndex);}
+    const OutputStatement&      getOutputStatement      (int outputStmtIndex)   const {return outputStmtList.at(outputStmtIndex);}
+    const CallStatement&        getCallStatement        (int callStmtIndex)     const {return callStmtList.at(callStmtIndex);}
+    const BranchStatement&      getBranchStatement      (int branchStmtIndex)   const {return branchStmtList.at(branchStmtIndex);}
+
+    int getNumLabel() const {return labels.size();}
+
+    const QString&  getLabelName    (int labelIndex) const {return labels.at(labelIndex);}
+    int             getLabelAddress (int labelIndex) const {return labeledStmtIndexList.at(labelIndex);}
+
+    const QStringList& getReferencedFunctionList()   const {return calledFunctions;}
+
+    //-------------------------------------------------------------------------
+
     /**
      * @brief addLocalVariable add a local variable (or function formal argument) definition
      * @param name name of local variable to add
@@ -91,12 +134,22 @@ public:
      */
     void addLocalVariable(const QString& name, ValueType ty, QVariant initializer = QVariant())
     {
+        int index = localVariableNames.size();
         localVariableNames.push_back(name);
         localVariableTypes.push_back(ty);
         localVariableInitializer.push_back(initializer);
+        localVariableNameToIndex.insert(name, index);
     }
     void setParamCount(int cnt){paramCount = cnt;}
     void setRequiredParamCount(int cnt){requiredParamCount = cnt;}
+
+    void addExternVariable(const QString& name, ValueType ty)
+    {
+        int index = externVariableNameList.size();
+        externVariableNameList.push_back(name);
+        externVariableTypeList.push_back(ty);
+        externVariableNameToIndex.insert(name, index);
+    }
 
     /**
      * @brief addExpression adds the expression to the function. Function will take over the object ownership
@@ -173,47 +226,6 @@ public:
 
     bool validate(DiagnosticEmitterBase& diagnostic, const Task& task);
 
-    const QString& getName()const{return functionName;}
-
-    // note that function parameter is implicitly a local variable
-    int getNumParameter()const {return paramCount;}
-    int getNumRequiredParameter()const{return requiredParamCount;}
-    int getNumLocalVariable()const{return localVariableNames.size();}
-    int getLocalVariableIndex(const QString& varName)const{
-        auto iter = localVariableNameToIndex.find(varName);
-        if(iter == localVariableNameToIndex.end())
-            return -1;
-        return iter.value();
-    }
-    const QString& getLocalVariableName(int localVarIndex)const{return localVariableNames.at(localVarIndex);}
-    ValueType getLocalVariableType(int localVarIndex, QString* varNameWBPtr = nullptr)const{
-        if(varNameWBPtr)
-            *varNameWBPtr = localVariableNames.at(localVarIndex);
-        return localVariableTypes.at(localVarIndex);
-    }
-    const QVariant& getLocalVariableInitializer(int localVarIndex) const{
-        return localVariableInitializer.at(localVarIndex);
-    }
-
-    int getNumExpression()const{return exprList.size();}
-    int getNumStatement()const{return stmtList.size();}
-
-    const ExpressionBase* getExpression(int exprIndex) const {return exprList.at(exprIndex);}
-    const Statement& getStatement(int stmtIndex) const {return stmtList.at(stmtIndex);}
-    const AssignmentStatement& getAssignmentStatement(int assignStmtIndex) const {return assignStmtList.at(assignStmtIndex);}
-    const OutputStatement& getOutputStatement(int outputStmtIndex) const {return outputStmtList.at(outputStmtIndex);}
-    const CallStatement& getCallStatement(int callStmtIndex) const {return callStmtList.at(callStmtIndex);}
-    const BranchStatement& getBranchStatement(int branchStmtIndex) const {return branchStmtList.at(branchStmtIndex);}
-
-    int getNumLabel()const{return labels.size();}
-    int getLabelAddress(int labelIndex, QString* labelNameWBPtr = nullptr) const{
-        if(labelNameWBPtr)
-            *labelNameWBPtr = labels.at(labelIndex);
-        return labeledStmtIndexList.at(labelIndex);
-    }
-
-    const QStringList getReferencedFunctions()const{return calledFunctions;}
-
 private:
     ExprList exprList;
     QList<Statement> stmtList;
@@ -227,6 +239,11 @@ private:
     QStringList labels;
     QList<int> labeledStmtIndexList;
 
+    // any reference to variables that are not local variables
+    // (node members / parameters, global variables)
+    QStringList externVariableNameList;
+    QList<ValueType> externVariableTypeList;
+
     int paramCount = 0;
     int requiredParamCount = 0; //!< number of parameters without initializer
     QString functionName;
@@ -234,10 +251,12 @@ private:
     QList<ValueType> localVariableTypes;
     QList<QVariant> localVariableInitializer;
 
-    // constructed during validate()
+    // constructed during construction
+    QHash<QString, int> externVariableNameToIndex;
     QHash<QString, int> localVariableNameToIndex;
-    // debug / error checking purpose only
-    QStringList calledFunctions;
+
+    // constructed during validate()
+    QStringList calledFunctions;// debug / error checking purpose only
 };
 
 
@@ -308,46 +327,35 @@ public:
     }
     int addNewPass();
 
-    int getNumGlobalVariable()const{
-        return globalVariables.varNameList.size();
-    }
-    int getGlobalVariableIndex(const QString& name)const{
-        return globalVariables.getIndex(name);
-    }
-    const QString& getGlobalVariableName(int index)const{
-        return globalVariables.varNameList.at(index);
-    }
-    ValueType getGlobalVariableType(int index)const{
-        return globalVariables.varTyList.at(index);
-    }
-    const QVariant& getGlobalVariableInitializer(int index)const{
-        return globalVariables.varInitializerList.at(index);
-    }
-    int getNumNodeMember(int nodeTypeIndex)const{
-        return nodeMemberDecl.at(nodeTypeIndex).varNameList.size();
-    }
-    int getNodeMemberIndex(int nodeTypeIndex, const QString& name)const{
-        return nodeMemberDecl.at(nodeTypeIndex).getIndex(name);
-    }
-    const QString& getNodeMemberName(int nodeTypeIndex, int memberIndex)const{
-        return nodeMemberDecl.at(nodeTypeIndex).varNameList.at(memberIndex);
-    }
-    ValueType getNodeMemberType(int nodeTypeIndex, int memberIndex)const{
-        return nodeMemberDecl.at(nodeTypeIndex).varTyList.at(memberIndex);
-    }
-    const QVariant& getNodeMemberInitializer(int nodeTypeIndex, int memberIndex)const{
-        return nodeMemberDecl.at(nodeTypeIndex).varInitializerList.at(memberIndex);
-    }
+    //-------------------------------------------------------------------------
+    // const interface
+
+    int getNumGlobalVariable()const{return globalVariables.varNameList.size();}
+
+    int             getGlobalVariableIndex  (const QString& name)   const {return globalVariables.getIndex(name);}
+    const QString&  getGlobalVariableName       (int index)         const {return globalVariables.varNameList.at(index);}
+    ValueType       getGlobalVariableType       (int index)         const {return globalVariables.varTyList.at(index);}
+    const QVariant& getGlobalVariableInitializer(int index)         const {return globalVariables.varInitializerList.at(index);}
+
+    int             getNumNodeMember        (int nodeTypeIndex)                     const {return nodeMemberDecl.at(nodeTypeIndex).varNameList.size();}
+    int             getNodeMemberIndex      (int nodeTypeIndex, const QString& name)const {return nodeMemberDecl.at(nodeTypeIndex).getIndex(name);}
+    const QString&  getNodeMemberName       (int nodeTypeIndex, int memberIndex)    const {return nodeMemberDecl.at(nodeTypeIndex).varNameList.at(memberIndex);}
+    ValueType       getNodeMemberType       (int nodeTypeIndex, int memberIndex)    const {return nodeMemberDecl.at(nodeTypeIndex).varTyList.at(memberIndex);}
+    const QVariant& getNodeMemberInitializer(int nodeTypeIndex, int memberIndex)    const {return nodeMemberDecl.at(nodeTypeIndex).varInitializerList.at(memberIndex);}
 
     int getNumPass()const{return nodeCallbacks.size();}
+
     int getNumFunction()const{return functions.size();}
-    int getFunctionIndex(const QString& functionName)const{return functionNameToIndex.value(functionName, -1);}
-    const Function& getFunction(int functionIndex)const{return functions.at(functionIndex);}
+
+    int             getFunctionIndex(const QString& functionName)   const {return functionNameToIndex.value(functionName, -1);}
+    const Function& getFunction     (int functionIndex)             const {return functions.at(functionIndex);}
+
+    const IRRootType& getRootType() const {return root;}
+
+    //-------------------------------------------------------------------------
 
     bool validated() const {return isValidated;}
     bool validate(DiagnosticEmitterBase& diagnostic);
-
-    const IRRootType& getRootType() const {return root;}
 
 private:
     struct MemberDecl{

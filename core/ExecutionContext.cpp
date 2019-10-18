@@ -413,7 +413,7 @@ bool ExecutionContext::getParentNode(const NodePtrType& src, NodePtrType& result
 
 bool ExecutionContext::getChildNode(int nodeIndex, const QString& childName, NodePtrType& result, ValueType keyTy, const QVariant& primaryKey)
 {
-    int childTyIndex = root.getType().getNodeIndex(childName);
+    int childTyIndex = root.getType().getNodeTypeIndex(childName);
     const IRNodeType& childTy = root.getType().getNodeType(childTyIndex);
     int primaryKeyIndex = childTy.getPrimaryKeyParameterIndex();
     if(Q_UNLIKELY(primaryKeyIndex < 0)){
@@ -449,7 +449,7 @@ bool ExecutionContext::getChildNode(int nodeIndex, const QString& childName, Nod
 
 bool ExecutionContext::getChildNode(int nodeIndex, const QString& childName, NodePtrType& result, const QString& keyField, ValueType keyTy, const QVariant& keyValue)
 {
-    int childTyIndex = root.getType().getNodeIndex(childName);
+    int childTyIndex = root.getType().getNodeTypeIndex(childName);
     const IRNodeType& childTy = root.getType().getNodeType(childTyIndex);
     int paramIndex = childTy.getParameterIndex(keyField);
     if(Q_UNLIKELY(paramIndex < 0)){

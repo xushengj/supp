@@ -19,40 +19,30 @@ class IRRootInstance;
 
 class IRNodeType{
     Q_DECLARE_TR_FUNCTIONS(IRNodeType)
-    friend class IRRootType;
+
 public:
 
     explicit IRNodeType(QString name)
         : name(name)
     {}
+    //-------------------------------------------------------------------------
+    // const interface
 
     QString getName()     const {return name;}
 
     int getNumParameter() const {return parameterList.size();}
     int getNumChildNode() const {return childNodeList.size();}
+
     const QString& getChildNodeName(int index) const {return childNodeList.at(index);}
-    QString getParameterName(int parameterIndex) const {return  parameterNameList.at(parameterIndex);}
-    ValueType getParameterType(int parameterIndex) const {return parameterList.at(parameterIndex).paramType;}
-    bool getParameterIsUnique(int parameterIndex) const {return  parameterList.at(parameterIndex).isUnique;}
+
+    QString     getParameterName    (int parameterIndex) const {return parameterNameList.at(parameterIndex);}
+    ValueType   getParameterType    (int parameterIndex) const {return parameterList.at(parameterIndex).paramType;}
+    bool        getParameterIsUnique(int parameterIndex) const {return parameterList.at(parameterIndex).isUnique;}
+
     int getPrimaryKeyParameterIndex()const{return primaryKeyIndex;}
 
-    int getParameterIndex(const QString& name) const{
-        auto iter = parameterNameToIndex.find(name);
-        if(iter == parameterNameToIndex.end()){
-            return -1;
-        }
-        return iter.value();
-    }
-    int getChildNodeTypeIndex(const QString& name) const{
-        auto iter = childNodeNameToIndex.find(name);
-        if(iter == childNodeNameToIndex.end()){
-            return -1;
-        }
-        return iter.value();
-    }
-
-    void addChildNode(QString childNodeName)    {childNodeList.push_back(childNodeName);}
-    void setPrimaryKey(QString paramName)       {primaryKeyName = paramName;}
+    int getParameterIndex    (const QString& name) const{return parameterNameToIndex.value(name, -1);}
+    int getChildNodeTypeIndex(const QString& name) const{return childNodeNameToIndex.value(name, -1);}
 
     bool operator==(const IRNodeType& rhs) const{
         return (this == &rhs) ||
@@ -62,6 +52,11 @@ public:
                 childNodeList       == rhs.childNodeList);
     }
 
+    //-------------------------------------------------------------------------
+
+    void addChildNode(QString childNodeName)    {childNodeList.push_back(childNodeName);}
+    void setPrimaryKey(QString paramName)       {primaryKeyName = paramName;}
+
     void addParameter(QString name, ValueType paramType, bool isUnique){
         parameterNameList.push_back(name);
         Parameter param;
@@ -70,11 +65,9 @@ public:
         parameterList.push_back(param);
     }
 
-    static bool validateMemberName(DiagnosticEmitterBase& diagnostic, QString name);
-
-private:
-
     bool validate(DiagnosticEmitterBase& diagnostic, IRRootType& root);
+
+    static bool validateMemberName(DiagnosticEmitterBase& diagnostic, const QString& name);
 
 private:
     struct Parameter{
@@ -101,7 +94,7 @@ private:
 class IRRootType
 {
     Q_DECLARE_TR_FUNCTIONS(IRRootType)
-    friend class IRNodeType;
+
 public:
     explicit IRRootType(const QString& name)
         : name(name)
@@ -110,27 +103,31 @@ public:
     IRRootType(const IRRootType&) = delete;
     IRRootType(IRRootType&&) = delete;
 
-    void addNodeTypeDefinition(const IRNodeType& node){isValidated = false; nodeList.push_back(node);}
-    void setRootNodeType(const QString& nodeName) {isValidated = false; rootNodeName = nodeName;}
+    //-------------------------------------------------------------------------
+    // const interface
 
-    const QString& getName()const{return name;}
-    int getNodeIndex(const QString& nodeName) const {
-        auto iter = nodeNameToIndex.find(nodeName);
-        if(iter == nodeNameToIndex.end())
-            return -1;
-        return iter.value();
-    }
-    int getNumNodeType()const{return nodeList.size();}
-    const IRNodeType& getNodeType(int index) const {return nodeList.at(index);}
+    const QString& getName() const {return name;}
+
+    int getNodeTypeIndex(const QString& nodeName) const {return nodeNameToIndex.value(nodeName, -1);}
+
+    int  getNumNodeType()                const {return nodeList.size();}
     bool isNodeTypeIndexValid(int index) const {return (index >= 0) && (index < nodeList.size());}
 
-    bool validated() const {return isValidated;}
-    bool validate(DiagnosticEmitterBase& diagnostic);
+    const IRNodeType&   getNodeType (int index)               const {return nodeList.at(index);}
+    const IRNodeType&   getNodeType (const QString& nodeName) const {return nodeList.at(getNodeTypeIndex(nodeName));}
 
     bool operator==(const IRRootType& rhs) const {
         return  nodeList        == rhs.nodeList &&
                 rootNodeName    == rhs.rootNodeName;
     }
+
+    //-------------------------------------------------------------------------
+
+    void addNodeTypeDefinition  (const IRNodeType& node)    {isValidated = false; nodeList.push_back(node);}
+    void setRootNodeType        (const QString& nodeName)   {isValidated = false; rootNodeName = nodeName;}
+
+    bool validated() const {return isValidated;}
+    bool validate(DiagnosticEmitterBase& diagnostic);
 
 private:
     QString name;
@@ -145,51 +142,39 @@ private:
 class IRNodeInstance
 {
     Q_DECLARE_TR_FUNCTIONS(IRNodeInstance)
-    friend class IRRootInstance;
+
 public:
     explicit IRNodeInstance(int typeIndex, int nodeIndex)
         : typeIndex(typeIndex), nodeIndex(nodeIndex){}
 
-    void addChildNode(int childIndex){
-        childNodeList.append(childIndex);
-    }
-    void setParent(int index){
-        parentIndex = index;
-    }
-    void setParameters(const QList<QVariant>& parameters){
-        this->parameters = parameters;
-    }
-    const QVariant& getParameter(int parameterIndex)const{return parameters.at(parameterIndex);}
-    int getTypeIndex() const {return typeIndex;}
-    int getParentIndex() const{return parentIndex;}
-    int getLocalTypeIndex(int tyIndex) const {
-        auto iter = childNodeTypeIndexToLocalIndex.find(tyIndex);
-        if(iter == childNodeTypeIndexToLocalIndex.end()){
-            return -1;
-        }
-        return iter.value();
-    }
-    int getNumChildNode()const{
-        return childNodeList.size();
-    }
-    int getChildNodeByOrder(int nodeIndex)const{
-        return childNodeList.at(nodeIndex);
-    }
-    int getNumChildNodeUnderType(int nodeLocalTypeIndex) const{
-        return childTypeList.at(nodeLocalTypeIndex).nodeList.size();
-    }
+    //-------------------------------------------------------------------------
+    // const interface
+
+    const QVariant& getParameter(int parameterIndex)    const {return parameters.at(parameterIndex);}
+
+    int getTypeIndex()                                  const {return typeIndex;}
+    int getParentIndex()                                const {return parentIndex;}
+    int getLocalTypeIndex       (int tyIndex)           const {return childNodeTypeIndexToLocalIndex.value(tyIndex, -1);}
+
+    int getNumChildNode()                               const {return childNodeList.size();}
+    int getChildNodeByOrder     (int nodeIndex)         const {return childNodeList.at(nodeIndex);}
+    int getNumChildNodeUnderType(int nodeLocalTypeIndex)const {return childTypeList.at(nodeLocalTypeIndex).nodeList.size();}
+
     int getChildNodeIndex(int nodeLocalTypeIndex, int nodeParamIndex, const QVariant& key)const{
-        const auto& hash = childTypeList.at(nodeLocalTypeIndex).perParamHash.at(nodeParamIndex);
-        auto iter = hash.find(key);
-        if(iter == hash.end())
-            return -1;
-        return iter.value();
+        return childTypeList.at(nodeLocalTypeIndex).perParamHash.at(nodeParamIndex).value(key, -1);
     }
     int getChildNodeIndex(int nodeLocalTypeIndex, int nodeIndexUnderType)const{
         return childTypeList.at(nodeLocalTypeIndex).nodeList.at(nodeIndexUnderType);
     }
-private:
+
+    //-------------------------------------------------------------------------
+
+    void addChildNode   (int childIndex)                    {childNodeList.append(childIndex);}
+    void setParent      (int index)                         {parentIndex = index;}
+    void setParameters  (const QList<QVariant>& parameters) {this->parameters = parameters;}
+
     bool validate(DiagnosticEmitterBase& diagnostic, IRRootInstance& root);
+
 private:
     struct ChildTypeRecord{
         QList<QHash<QVariant, int>> perParamHash;   //!< lazily constructed hash table; [paramIndex][unique'd param value] -> [child node]
@@ -218,6 +203,16 @@ public:
     IRRootInstance(const IRRootInstance&) = delete;
     IRRootInstance(IRRootInstance&&) = delete;
 
+    //-------------------------------------------------------------------------
+    // const interface
+
+    int                     getNumNode()            const {return nodeList.size();}
+    const IRNodeInstance&   getNode(int nodeIndex)  const {return nodeList.at(nodeIndex);}
+
+    const IRRootType&       getType()               const {return ty;}
+
+    //-------------------------------------------------------------------------
+
     int addNode(int typeIndex){
         isValidated = false;
         int index = nodeList.size();
@@ -231,15 +226,10 @@ public:
         }
         return nodeList[nodeIndex];
     }
-    int getNumNode()const{return nodeList.size();}
-    const IRNodeInstance& getNode(int nodeIndex) const{
-        return nodeList.at(nodeIndex);
-    }
 
     bool validated() const {return isValidated;}
     bool validate(DiagnosticEmitterBase& diagnostic);
 
-    const IRRootType& getType() const {return ty;}
 private:
     const IRRootType& ty;
     bool isValidated = false;
