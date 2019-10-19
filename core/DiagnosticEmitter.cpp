@@ -27,17 +27,10 @@ void testDump(
 }
 }// anonymous namespace
 
-void ConsoleDiagnosticEmitter::info   (QString category, QString text, QString optionalText)
+void ConsoleDiagnosticEmitter::diagnosticHandle(Diag::ID id, const QList<QVariant>& data)
 {
-    testDump(pathList, QStringLiteral("info"), category, text, optionalText);
-}
-void ConsoleDiagnosticEmitter::warning(QString category, QString text, QString optionalText)
-{
-    testDump(pathList, QStringLiteral("warning"), category, text, optionalText);
-}
-void ConsoleDiagnosticEmitter::error  (QString category, QString text, QString optionalText)
-{
-    testDump(pathList, QStringLiteral("error"), category, text, optionalText);
+    Q_UNUSED(data)
+    testDump(pathList, QStringLiteral("Diagnostic"), Diag::getString(id), QString(), QString());
 }
 
 /*

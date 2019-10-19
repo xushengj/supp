@@ -17,7 +17,7 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
     bool isValidated = true;
 
     // check if name is good
-    if(Q_LIKELY(IRNodeType::validateMemberName(diagnostic, functionName))){
+    if(Q_LIKELY(IRNodeType::validateName(diagnostic, functionName))){
         diagnostic.attachDescriptiveName(functionName);
     }else{
         isValidated = false;
@@ -32,55 +32,34 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
         const QString& varName = externVariableNameList.at(i);
         int searchResult = externVariableNameToIndex.value(varName, -1);
         if(Q_UNLIKELY(searchResult != i)){
-            diagnostic.error(tr("Name conflict"),
-                             tr("Multiple extern variable reference with the same name"),
-                             varName);
+            diagnostic(Diag::Error_Func_NameClash_ExternVariable, varName, searchResult, i);
             isValidated = false;
         }
         // no void extern reference
         ValueType expectedTy = externVariableTypeList.at(i);
         if(Q_UNLIKELY(expectedTy == ValueType::Void)){
-            diagnostic.error(tr("Bad type"),
-                             tr("Extern variable cannot be void type"),
-                             varName);
+            diagnostic(Diag::Error_Func_BadType_ExternVariableVoid, varName);
             isValidated = false;
         }
     }
-    if(Q_UNLIKELY(externVariableNameToIndex.size() != externVariableNameList.size())){
-        diagnostic.error(tr("Name conflict"),
-                         tr("Total number of unique extern variable names (%1) is less than number of extern variables (%2)").arg(
-                             QString::number(externVariableNameToIndex.size()),
-                             QString::number(externVariableNameList.size()))
-                         );
-        isValidated = false;
+    if(isValidated){
+        Q_ASSERT(externVariableNameToIndex.size() == externVariableNameList.size());
     }
-
 
     // check if local variables are good
     if(Q_UNLIKELY(paramCount < 0 || paramCount > localVariableNames.size())){
-        diagnostic.error(tr("Invalid value"),
-                         tr("Number of parameter (%1) is invalid").arg(
-                             QString::number(paramCount)
-                           )
-                         );
+        diagnostic(Diag::Error_Func_InvalidValue_TotalParamCount, paramCount);
         isValidated = false;
     }
 
     if(Q_UNLIKELY(requiredParamCount < 0 || requiredParamCount > paramCount)){
-        diagnostic.error(tr("Invalid value"),
-                         tr("Number of required parameter (%1) is invalid").arg(
-                             QString::number(requiredParamCount)
-                           )
-                         );
+        diagnostic(Diag::Error_Func_InvalidValue_RequiredParamCount, requiredParamCount);
         isValidated = false;
     }else{
         // the rest of parameters should all have default initializer
         for(int i = requiredParamCount+1; i < qMin(paramCount, localVariableInitializer.size()); ++i){
             if(Q_UNLIKELY(!localVariableInitializer.at(i).isValid())){
-                diagnostic.error(tr("Missing initializer"),
-                                 tr("Optional parameter %1(%2) do not have an initializer").arg(
-                                     QString::number(i),
-                                     localVariableNames.at(i)));
+                diagnostic(Diag::Error_Func_MissingInitializer_OptionalParam, i, localVariableNames.at(i));
                 isValidated = false;
             }
         }
@@ -89,7 +68,7 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
     localVariableNameToIndex.clear();
     for(int i = 0, num = localVariableNames.size(); i < num; ++i){
         const QString& name = localVariableNames.at(i);
-        if(Q_UNLIKELY(!IRNodeType::validateMemberName(diagnostic, name))){
+        if(Q_UNLIKELY(!IRNodeType::validateName(diagnostic, name))){
             isValidated = false;
         }else{
             auto iter = localVariableNameToIndex.find(name);
@@ -99,9 +78,7 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
                 // no void local variables
                 ValueType expectedTy = localVariableTypes.at(i);
                 if(Q_UNLIKELY(expectedTy == ValueType::Void)){
-                    diagnostic.error(tr("Bad type"),
-                                     tr("Local variable cannot be void type"),
-                                     name);
+                    diagnostic(Diag::Error_Func_BadType_LocalVariableVoid, name);
                     isValidated = false;
                 }
 
@@ -110,17 +87,12 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
                 if(initializer.isValid()){
                     ValueType initTy = getValueType(static_cast<QMetaType::Type>(initializer.userType()));
                     if(Q_UNLIKELY(initTy != expectedTy)){
-                        diagnostic.error(tr("Type mismatch"),
-                                         tr("Local variable is in type %1 but initializer is in type %2").arg(
-                                             getTypeNameString(expectedTy),
-                                             getTypeNameString(initTy)));
+                        diagnostic(Diag::Error_Func_BadInitializer_LocalVariable, i, name, expectedTy, initTy);
                         isValidated = false;
                     }
                 }
             }else{
-                diagnostic.error(tr("Name conflict"),
-                                 tr("More than one local variable with the same name"),
-                                 name);
+                diagnostic(Diag::Error_Func_NameClash_LocalVariable, name, iter.value(), i);
                 isValidated = false;
             }
         }
@@ -130,7 +102,6 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
     // 1. no circular dependence (just check if any expression is referencing another expression with larger index)
     // 2. type expectation should match
     // 3. if the expression need to reference variable by name, the name should either appear in local variable or in extern variable list
-    QString exprCheckFailCommonPrefix = tr("During checking expression %1: dependent expression %2: %3");
     for(int index = 0, len = exprList.size(); index < len; ++index){
         const ExpressionBase* ptr = exprList.at(index);
         QList<int> dependentExprIndices;
@@ -140,40 +111,24 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
         for(int i = 0, len = dependentExprIndices.size(); i < len; ++i){
             int exprIndex = dependentExprIndices.at(i);
             if(Q_UNLIKELY(exprIndex < 0 || exprIndex >= exprList.size() || exprIndex >= index)){
-                diagnostic.error(tr("Invalid reference"),
-                                 exprCheckFailCommonPrefix.arg(
-                                     QString::number(index),
-                                     QString::number(exprIndex),
-                                     tr("index is invalid")
-                                   )
-                                 );
+                diagnostic(Diag::Error_Func_BadExprDependence_BadIndex, index, exprIndex);
                 isValidated = false;
             }else{
                 if(Q_UNLIKELY(ptr->getExpressionType() != dependentExprTypes.at(i))){
-                    diagnostic.error(tr("Type mismatch"),
-                                     exprCheckFailCommonPrefix.arg(
-                                         QString::number(index),
-                                         QString::number(exprIndex),
-                                         tr("Expecting type %1 but get %2").arg(
-                                             getTypeNameString(ptr->getExpressionType()),
-                                             getTypeNameString(dependentExprTypes.at(i))
-                                         )
-                                       )
-                                     );
+                    diagnostic(Diag::Error_Func_BadExprDependence_TypeMismatch,
+                               index, exprIndex, dependentExprTypes.at(i), ptr->getExpressionType());
                     isValidated = false;
                 }
-                QList<QString> nameReference;
-                ptr->getVariableNameReference(nameReference);
-                if(!nameReference.empty()){
-                    for(const auto& name : nameReference){
-                        if(localVariableNameToIndex.value(name, -1) == -1){
-                            if(Q_UNLIKELY(externVariableNameToIndex.value(name, -1) == -1)){
-                                diagnostic.error(tr("Invalid reference"),
-                                                 tr("Unknown variable reference by expression"),
-                                                 name);
-                                isValidated = false;
-                            }
-                        }
+            }
+        }
+        QList<QString> nameReference;
+        ptr->getVariableNameReference(nameReference);
+        if(!nameReference.empty()){
+            for(const auto& name : nameReference){
+                if(localVariableNameToIndex.value(name, -1) == -1){
+                    if(Q_UNLIKELY(externVariableNameToIndex.value(name, -1) == -1)){
+                        diagnostic(Diag::Error_Func_BadExpr_BadNameReference, index, name);
+                        isValidated = false;
                     }
                 }
             }
@@ -187,46 +142,63 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
     for(const auto& stmt: assignStmtList){
         if(stmt.lvalueExprIndex == -1){
             // check if the name reference is good
-            if(Q_UNLIKELY(!IRNodeType::validateMemberName(diagnostic, stmt.lvalueName))){
+            if(Q_UNLIKELY(!IRNodeType::validateName(diagnostic, stmt.lvalueName))){
                 isValidated = false;
             }
         }else{
             // lhs should be valueptr
             if(Q_UNLIKELY(stmt.lvalueExprIndex < 0 || stmt.lvalueExprIndex >= exprList.size())){
-                diagnostic.error(tr("Invalid reference"),
-                                 tr("LHS expression index (%1) of assignment is invalid").arg(
-                                     QString::number(stmt.lvalueExprIndex)
-                                   )
-                                 );
+                diagnostic(Diag::Error_Func_Stmt_BadExprIndex, stmt.lvalueExprIndex);
                 isValidated = false;
             }else if(Q_UNLIKELY(exprList.at(stmt.lvalueExprIndex)->getExpressionType() != ValueType::ValuePtr)){
-                diagnostic.error(tr("Type mismatch"),
-                                 tr("LHS expression of type %1 is not writable").arg(
-                                     getTypeNameString(exprList.at(stmt.lvalueExprIndex)->getExpressionType())));
+                diagnostic(Diag::Error_Func_Assign_BadLHS_Type, stmt.lvalueExprIndex, exprList.at(stmt.lvalueExprIndex)->getExpressionType());
                 isValidated = false;
             }
         }
-        // we do not test rhs type yet
+        if(Q_UNLIKELY(stmt.rvalueExprIndex < 0 || stmt.rvalueExprIndex >= exprList.size())){
+            diagnostic(Diag::Error_Func_Stmt_BadExprIndex, stmt.rvalueExprIndex);
+            isValidated = false;
+        }else{
+            ValueType ty = exprList.at(stmt.rvalueExprIndex)->getExpressionType();
+            if(Q_UNLIKELY(ty == ValueType::Void)){
+                diagnostic(Diag::Error_Func_Assign_BadRHS_RHSVoid, stmt.rvalueExprIndex);
+                isValidated = false;
+            }else if(stmt.lvalueExprIndex == -1){
+                // we only test rhs type match if the assignment is by name
+                ValueType expectedTy = ValueType::Void;
+
+                int localVarIndex = localVariableNameToIndex.value(stmt.lvalueName, -1);
+                if(localVarIndex < 0){
+                    int externVarIndex = externVariableNameToIndex.value(stmt.lvalueName, -1);
+                    if(Q_UNLIKELY(externVarIndex < 0)){
+                        diagnostic(Diag::Error_Func_Assign_BadLHS_BadNameReference, stmt.lvalueName);
+                        isValidated = false;
+                    }else{
+                        expectedTy = externVariableTypeList.at(externVarIndex);
+                    }
+                }else{
+                    expectedTy = localVariableTypes.at(localVarIndex);
+                }
+
+                if(Q_UNLIKELY(ty != expectedTy)){
+                    diagnostic(Diag::Error_Func_Assign_BadRHS_VariableTypeMismatch,
+                               stmt.lvalueName, expectedTy, stmt.rvalueExprIndex, ty);
+                    isValidated = false;
+                }
+            }
+        }
     }
     for(const auto& stmt: outputStmtList){
         // for now we only output text, so output statement should only accept string expression
         // later on we may check output type based on configuration from Task or ExecutionContext
         int exprIndex = stmt.exprIndex;
         if(Q_UNLIKELY(exprIndex < 0 || exprIndex >= exprList.size())){
-            diagnostic.error(tr("Invalid reference"),
-                             tr("Expression index (%1) of output statement is invalid").arg(
-                                 QString::number(exprIndex)
-                               )
-                             );
+            diagnostic(Diag::Error_Func_Stmt_BadExprIndex, exprIndex);
             isValidated = false;
         }else{
             const ExpressionBase* ptr = exprList.at(exprIndex);
             if(Q_UNLIKELY(ptr->getExpressionType() != ValueType::String)){
-                diagnostic.error(tr("Type mismatch"),
-                                 tr("Output statement expects string type expression but got %1").arg(
-                                     getTypeNameString(ptr->getExpressionType())
-                                   )
-                                 );
+                diagnostic(Diag::Error_Func_Output_BadRHS_Type, exprIndex, ptr->getExpressionType());
                 isValidated = false;
             }
         }
@@ -236,9 +208,7 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
     for(const auto& stmt: callStmtList){
         int functionIndex = task.getFunctionIndex(stmt.functionName);
         if(Q_UNLIKELY(functionIndex == -1)){
-            diagnostic.error(tr("Function not found"),
-                             tr("Callee function is not found in current task"),
-                             stmt.functionName);
+            diagnostic(Diag::Error_Func_Call_CalleeNotFound, stmt.functionName);
             isValidated = false;
         }else{
             const Function& f = task.getFunction(functionIndex);
@@ -250,45 +220,22 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
             int paramPassed = stmt.argumentExprList.size();
             int paramCount = f.getNumParameter();
             int requiredParamCount = f.getNumRequiredParameter();
-            if(Q_UNLIKELY(paramPassed < requiredParamCount)){
-                diagnostic.error(tr("Bad parameter list"),
-                                 tr("Function expects at least %1 argument but got %2").arg(
-                                     QString::number(requiredParamCount),
-                                     QString::number(paramPassed)
-                                   ),
-                                 stmt.functionName);
-                isValidated = false;
-            }else if(Q_UNLIKELY(paramPassed > paramCount)){
-                diagnostic.error(tr("Bad parameter list"),
-                                 tr("Function expects at most %1 input but got %2").arg(
-                                     QString::number(paramCount),
-                                     QString::number(paramPassed)
-                                   ),
-                                 stmt.functionName);
+            if(Q_UNLIKELY(paramPassed < requiredParamCount || paramPassed > paramCount)){
+                diagnostic(Diag::Error_Func_Call_BadParamList_Count, stmt.functionName, paramCount, requiredParamCount, paramPassed);
                 isValidated = false;
             }else{
                 for(int i = 0; i < paramPassed; ++i){
                     int exprIndex = stmt.argumentExprList.at(i);
                     if(Q_UNLIKELY(exprIndex < 0 || exprIndex >= exprList.size())){
-                        diagnostic.error(tr("Invalid reference"),
-                                         tr("Expression index (%1) of call statement is invalid").arg(
-                                             QString::number(exprIndex)
-                                           )
-                                         );
+                        diagnostic(Diag::Error_Func_Stmt_BadExprIndex, exprIndex);
                         isValidated = false;
                     }else{
                         QString paramName = f.getLocalVariableName(i);
                         ValueType expectedTy = f.getLocalVariableType(i);
                         ValueType actualTy = exprList.at(exprIndex)->getExpressionType();
                         if(Q_UNLIKELY(expectedTy != actualTy)){
-                            diagnostic.error(tr("Type mismatch"),
-                                             tr("Function argument %1 expects type %2 but got %3 from call").arg(
-                                                 QString::number(i),
-                                                 getTypeNameString(expectedTy),
-                                                 getTypeNameString(actualTy)
-                                               ),
-                                             tr("Parameter \"%1\" of function \"%2\"").arg(paramName, f.getName())
-                                             );
+                            diagnostic(Diag::Error_Func_Call_BadParamList_Type,
+                                       stmt.functionName, i, paramName, expectedTy, actualTy);
                             isValidated = false;
                         }
                     }
@@ -305,15 +252,13 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
         if(Q_LIKELY(iter == labelNameToStatementIndex.end())){
             labelNameToStatementIndex.insert(name, stmtIndex);
         }else{
-            diagnostic.error(tr("Duplicated label"),
-                             tr("More than one label have the same name"),
-                             name);
+            diagnostic(Diag::Error_Func_DuplicateLabel, name, iter.value(), stmtIndex);
             isValidated = false;
         }
     }
     branchStmtList.clear();
     branchStmtList.reserve(branchTempStmtList.size());
-    auto resolveLabel = [&](BranchStatementTemp::BranchActionType ty, const QString& labelName, int& stmtIndex)->void{
+    auto resolveLabel = [&](BranchStatementTemp::BranchActionType ty, int caseIndex, const QString& labelName, int& stmtIndex)->void{
         switch(ty){
         case BranchStatementTemp::BranchActionType::Unreachable:
             stmtIndex = -2;
@@ -326,9 +271,7 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
             if(Q_LIKELY(iter != labelNameToStatementIndex.end())){
                 stmtIndex = iter.value();
             }else{
-                diagnostic.error(tr("Unresolved label reference"),
-                                 tr("Branch statement references a label that do not exist"),
-                                 labelName);
+                diagnostic(Diag::Error_Func_Branch_BadLabelReference, labelName, caseIndex);
                 isValidated = false;
             }
         }break;
@@ -336,35 +279,24 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
     };
     for(const auto& stmt: branchTempStmtList){
         BranchStatement cooked;
-        resolveLabel(stmt.defaultAction, stmt.defaultJumpLabelName, cooked.defaultStmtIndex);
+        resolveLabel(stmt.defaultAction, -1, stmt.defaultJumpLabelName, cooked.defaultStmtIndex);
         cooked.cases.reserve(stmt.cases.size());
         for(int i = 0, num = stmt.cases.size(); i < num; ++i){
             const auto& brcase = stmt.cases.at(i);
             BranchStatement::BranchCase c;
             c.exprIndex = brcase.exprIndex;
-            resolveLabel(brcase.action, brcase.labelName, c.stmtIndex);
+            resolveLabel(brcase.action, i, brcase.labelName, c.stmtIndex);
             cooked.cases.push_back(c);
 
             // we currently expect Int64 or ValuePtr as branch condition
             int exprIndex = c.exprIndex;
             if(Q_UNLIKELY(exprIndex < 0 || exprIndex >= exprList.size())){
-                diagnostic.error(tr("Invalid reference"),
-                                 tr("Expression index (%1) of branch case %2 is invalid").arg(
-                                     QString::number(exprIndex),
-                                     QString::number(i)
-                                   )
-                                 );
+                diagnostic(Diag::Error_Func_Stmt_BadExprIndex_BranchCondition, exprIndex, i);
                 isValidated = false;
             }else{
                 ValueType ty = exprList.at(exprIndex)->getExpressionType();
                 if(Q_UNLIKELY(ty != ValueType::Int64 && ty != ValueType::ValuePtr)){
-                    diagnostic.error(tr("Type mismatch"),
-                                     tr("Expression %1 of type %2 in branch case %3 cannot be used as branch condition").arg(
-                                         QString::number(exprIndex),
-                                         getTypeNameString(ty),
-                                         QString::number(i)
-                                       )
-                                     );
+                    diagnostic(Diag::Error_Func_Branch_BadConditionType, i, exprIndex, ty);
                     isValidated = false;
                 }
             }
@@ -413,7 +345,7 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
         decl.varNameToIndex.clear();
         for(int i = 0, len = decl.varNameList.size(); i < len; ++i){
             const QString& str = decl.varNameList.at(i);
-            if(Q_UNLIKELY(!IRNodeType::validateMemberName(diagnostic, str))){
+            if(Q_UNLIKELY(!IRNodeType::validateName(diagnostic, str))){
                 isValidated = false;
                 continue;
             }
@@ -425,21 +357,14 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
                 const QVariant& initializer = decl.varInitializerList.at(i);
                 if(initializer.isValid()){
                     ValueType ty = decl.varTyList.at(i);
-                    QMetaType::Type mty = static_cast<QMetaType::Type>(initializer.userType());
-                    if(Q_UNLIKELY(mty != getQMetaType(ty))){
-                        diagnostic.error(tr("Type mismatch"),
-                                         tr("variable is in type %1 but the initializer is in type %2").arg(
-                                             getTypeNameString(ty),
-                                             getTypeNameString(getValueType(mty))
-                                           ),
-                                         str);
+                    ValueType initializerTy = getValueType(static_cast<QMetaType::Type>(initializer.userType()));
+                    if(Q_UNLIKELY(initializerTy != ty)){
+                        diagnostic(Diag::Error_Task_BadInitializer_ExternVariable, str, ty, initializerTy);
                         isValidated = false;
                     }
                 }
             }else{
-                diagnostic.error(tr("Name conflict"),
-                                 tr("More than one variable with the same name"),
-                                 str);
+                diagnostic(Diag::Error_Task_NameClash_ExternVariable, str, iter.value(), i);
                 isValidated = false;
             }
         }
@@ -454,7 +379,7 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
     diagnostic.pushNode(tr("Function"));
     for(int i = 0, len = functions.size(); i < len; ++i){
         const QString& name = functions.at(i).getName();
-        if(!IRNodeType::validateMemberName(diagnostic, name)){
+        if(!IRNodeType::validateName(diagnostic, name)){
             isValidated = false;
             continue;
         }
@@ -462,9 +387,7 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
         if(Q_LIKELY(iter == functionNameToIndex.end())){
             functionNameToIndex.insert(name, i);
         }else{
-            diagnostic.error(tr("Name conflict"),
-                             tr("More than one function with the same name"),
-                             name);
+            diagnostic(Diag::Error_Task_NameClash_Function, name, iter.value(), i);
             isValidated = false;
         }
     }
@@ -488,12 +411,8 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
             const auto& cbs = list.at(i);
             if(cbs.onEntryFunctionIndex >= 0){
                 if(Q_UNLIKELY(cbs.onEntryFunctionIndex >= functions.size())){
-                    diagnostic.error(tr("Invalid reference"),
-                                     tr("on entry callback (%1) for node type %2 is invalid").arg(
-                                         QString::number(cbs.onEntryFunctionIndex),
-                                         QString::number(i)
-                                       ),
-                                     root.getNodeType(i).getName());
+                    diagnostic(Diag::Error_Task_BadFunctionIndex_NodeTraverseCallback,
+                               root.getNodeType(i).getName(), passIndex, cbs.onEntryFunctionIndex);
                     isValidated = false;
                 }else{
                     tryEnqueue(cbs.onEntryFunctionIndex);
@@ -502,12 +421,8 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
             }
             if(cbs.onExitFunctionIndex >= 0){
                 if(Q_UNLIKELY(cbs.onExitFunctionIndex >= functions.size())){
-                    diagnostic.error(tr("Invalid reference"),
-                                     tr("on exit callback (%1) for node type %2 is invalid").arg(
-                                         QString::number(cbs.onExitFunctionIndex),
-                                         QString::number(i)
-                                       ),
-                                     root.getNodeType(i).getName());
+                    diagnostic(Diag::Error_Task_BadFunctionIndex_NodeTraverseCallback,
+                               root.getNodeType(i).getName(), passIndex, cbs.onExitFunctionIndex);
                     isValidated = false;
                 }else{
                     tryEnqueue(cbs.onExitFunctionIndex);
@@ -520,8 +435,7 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
     diagnostic.popNode();
 
     if(Q_UNLIKELY(!isAnyCallbackSet)){
-        diagnostic.error(tr("Empty task"),
-                         tr("No callback is specified for the task"));
+        diagnostic(Diag::Error_Task_NoCallback);
         isValidated = false;
     }
 
@@ -548,13 +462,7 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
 
     for(int i = 0, len = functions.size(); i < len; ++i){
         if(!functionReachable.at(i)){
-            diagnostic.warning(tr("Unreachable function"),
-                               tr("Function %1 is not used").arg(
-                                   QString::number(i)
-                                 ),
-                               functions.at(i).getName()
-                               );
-            // just a warning; no invalidation
+            diagnostic(Diag::Warn_Task_UnreachableFunction, functions.at(i).getName());
         }
     }
     return isValidated;

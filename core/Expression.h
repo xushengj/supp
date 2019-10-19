@@ -49,15 +49,6 @@ public:
      * @return true if execution is successful; false if there is any fatal error that should abort the evaluation
      */
     virtual bool evaluate(ExecutionContext& ctx, QVariant& retVal, const QList<QVariant>& dependentExprResults) const = 0;
-
-    /**
-     * @brief emitTypeErrorDiagnostic generates an error on type mismatch
-     * @param ctx the environment of evaluation
-     * @param expectedTy expected type of an expression
-     * @param actualTy actual type of an expression
-     * @param exprText text to describe the expression having unexpected type
-     */
-    void emitTypeErrorDiagnostic(ExecutionContext& ctx, ValueType expectedTy, ValueType actualTy, QString exprText = QString()) const;
 };
 
 // an expression list that use deep copy

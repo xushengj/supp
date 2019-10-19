@@ -59,7 +59,6 @@ inline QMetaType::Type getQMetaType(ValueType ty){
 
 inline ValueType getValueType(QMetaType::Type ty){
     switch(ty){
-    case QMetaType::UnknownType:       return ValueType::Void;
     case QMetaType::QString:           return ValueType::String;
     case QMetaType::LongLong:          return ValueType::Int64;
     default:
@@ -67,8 +66,8 @@ inline ValueType getValueType(QMetaType::Type ty){
             return ValueType::NodePtr;
         if(ty == static_cast<QMetaType::Type>(qMetaTypeId<ValuePtrType>()))
             return ValueType::ValuePtr;
+        return ValueType::Void;
     }
-    Q_UNREACHABLE();
 }
 
 // we only use int and string as key

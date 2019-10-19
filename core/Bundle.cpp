@@ -93,9 +93,7 @@ ValueType getValueTypeFromString(DiagnosticEmitterBase& diagnostic, const QStrin
     if(ty == STR_TY_VALUEPTR)
         return ValueType::ValuePtr;
 
-    diagnostic.error(Bundle::tr("Unknown type"),
-                     Bundle::tr("Given type string is not known"),
-                     ty);
+    diagnostic(Diag::Error_Json_UnknownType_String, ty);
     throw std::runtime_error("Unknown type");
 }
 
@@ -112,8 +110,7 @@ int getExpression(DiagnosticEmitterBase& diagnostic, const QJsonObject& json, Fu
             int value = val.toInt();
             return f.addExpression(new LiteralExpression(static_cast<qint64>(value)));
         }else{
-            diagnostic.error(QString(),
-                             Bundle::tr("Unhandled literal type"));
+            diagnostic(Diag::Error_Json_UnsupportedLiteralType);
             throw std::runtime_error("Unhandled literal type");
         }
     }else if(exprTy == STR_EXPR_TYPE_VAR_READ){
@@ -125,9 +122,7 @@ int getExpression(DiagnosticEmitterBase& diagnostic, const QJsonObject& json, Fu
         }else{
             refIndex = f.getExternVariableIndex(name);
             if(Q_UNLIKELY(refIndex == -1)){
-                diagnostic.error(QString(),
-                                 Bundle::tr("Reference to unknown variable"),
-                                 name);
+                diagnostic(Diag::Error_Json_BadReference_Variable, name);
                 throw std::runtime_error("Unknown variable");
             }
             ty = f.getExternVariableType(refIndex);
@@ -138,9 +133,7 @@ int getExpression(DiagnosticEmitterBase& diagnostic, const QJsonObject& json, Fu
         return f.addExpression(new VariableAddressExpression(name));
     }
 
-    diagnostic.error(Bundle::tr("Unknown expression type"),
-                     Bundle::tr("Given expression type string is not known"),
-                     exprTy);
+    diagnostic(Diag::Error_Json_UnknownType_String, exprTy);
     throw std::runtime_error("Unknown expression");
 }
 
@@ -162,9 +155,7 @@ void getMemberDeclaration(DiagnosticEmitterBase& diagnostic, const QJsonArray& j
         if(!initializer.isUndefined()){
             switch (entry.ty) {
             default:{
-                diagnostic.error(Bundle::tr("Unhandled initializer type"),
-                                 Bundle::tr("Variable of given type cannot have initializer"), // if we reach here, getValueTypeFromString() didn't throw
-                                 getTypeNameString(entry.ty));
+                diagnostic(Diag::Error_Json_UnexpectedInitializer, entry.name, entry.ty);
                 throw std::runtime_error("Unhandled initializer type");
             }/*break;*/
             case ValueType::Int64:
@@ -257,9 +248,7 @@ Function getFunction(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
                     ty = BranchStatementTemp::BranchActionType::Unreachable;
                     labelName.clear();
                 }else{
-                    diagnostic.error(Bundle::tr("Unhandled branch action type"),
-                                     Bundle::tr("Provided branch action type string is not recognized"),
-                                     actTy);
+                    diagnostic(Diag::Error_Json_UnknownBranchAction, actTy);
                     throw std::runtime_error("Unhandled branch action type");
                 }
             };
@@ -277,9 +266,7 @@ Function getFunction(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
             QString labelName = obj.value(STR_STMT_LABEL_NAME).toString();
             func.addLabel(labelName);
         }else{
-            diagnostic.error(Bundle::tr("Unhandled statement type"),
-                             Bundle::tr("Provided statement type is unknown"),
-                             stmtTy);
+            diagnostic(Diag::Error_Json_UnknownStatementType, stmtTy);
             throw std::runtime_error("Unhandled statement type");
         }
     }
@@ -386,9 +373,7 @@ Bundle* Bundle::fromJson(const QByteArray& json, DiagnosticEmitterBase &diagnost
                 }
             }
             if(Q_UNLIKELY(irIndex == -1)){
-                diagnostic.error(QString(),
-                                 tr("Unknown IR name"),
-                                 inputIRName);
+                diagnostic(Diag::Error_Json_BadReference_IR, inputIRName);
                 return nullptr;
             }
             TaskRecord record;
@@ -396,9 +381,7 @@ Bundle* Bundle::fromJson(const QByteArray& json, DiagnosticEmitterBase &diagnost
             record.inputIRType = irIndex;
             record.outputTypeIndex = ptr->outputNameToIndex.value(outputName, -1);
             if(Q_UNLIKELY(record.outputTypeIndex == -1)){
-                diagnostic.error(QString(),
-                                 tr("Unknown output name"),
-                                 outputName);
+                diagnostic(Diag::Error_Json_BadReference_Output, outputName);
                 return nullptr;
             }
             const IRRootType& irRoot = *ptr->irTypes.at(irIndex);
@@ -418,9 +401,7 @@ Bundle* Bundle::fromJson(const QByteArray& json, DiagnosticEmitterBase &diagnost
                 QString nodeName = iter.key();
                 int nodeIndex = irRoot.getNodeTypeIndex(nodeName);
                 if(Q_UNLIKELY(nodeIndex < 0)){
-                    diagnostic.error(QString(),
-                                     tr("Unknown node name"),
-                                     nodeName);
+                    diagnostic(Diag::Error_Json_BadReference_IRNodeType, nodeName);
                     return nullptr;
                 }
                 getMemberDeclaration(diagnostic, iter.value().toArray(), vars);
@@ -437,9 +418,7 @@ Bundle* Bundle::fromJson(const QByteArray& json, DiagnosticEmitterBase &diagnost
                     QString nodeName = iter.key();
                     int nodeIndex = irRoot.getNodeTypeIndex(nodeName);
                     if(Q_UNLIKELY(nodeIndex < 0)){
-                        diagnostic.error(QString(),
-                                         tr("Unknown node name"),
-                                         nodeName);
+                        diagnostic(Diag::Error_Json_BadReference_IRNodeType, nodeName);
                         return nullptr;
                     }
                     QJsonObject callbackObj = iter.value().toObject();

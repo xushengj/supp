@@ -71,8 +71,8 @@ public:
     bool getRootNodePtr(NodePtrType& result);
     bool getParentNode(const NodePtrType& src, NodePtrType& result);
 
-    bool getChildNode(int nodeIndex, const QString& childName, NodePtrType& result, ValueType keyTy, const QVariant& primaryKey);
-    bool getChildNode(int nodeIndex, const QString& childName, NodePtrType& result, const QString& keyField,  ValueType keyTy, const QVariant& keyValue);
+    bool getChildNode(const NodePtrType &src, const QString& childName, NodePtrType& result, ValueType keyTy, const QVariant& primaryKey);
+    bool getChildNode(const NodePtrType& src, const QString& childName, NodePtrType& result, const QString& keyField,  ValueType keyTy, const QVariant& keyValue);
     // no indexing by child node index yet.. should be there later on
 
     //*************************************************************************
@@ -113,8 +113,7 @@ private:
      * @param val the final value of root expression
      * @return true if the evaluation is successful, false otherwise
      */
-    bool evaluateExpression(int expressionIndex, int stmtIndex, ValueType& ty, QVariant& val);
-
+    bool evaluateExpression(int expressionIndex, ValueType& ty, QVariant& val);
 
 
     PtrCommon getPtrSrcHead(){

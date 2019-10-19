@@ -99,9 +99,7 @@ bool ExecutionContext::read(const QString& name, ValueType& ty, QVariant& val)
         }
     }
 
-    diagnostic.error(tr("Variable not found"),
-                     tr("Value read fail: variable with the given name cannot be found"),
-                     name);
+    diagnostic(Diag::Error_Exec_BadReference_VariableRead, name);
     return false;
 }
 
@@ -112,9 +110,7 @@ bool ExecutionContext::read(const ValuePtrType& valuePtr, ValueType& ty, QVarian
 
     switch(valuePtr.ty){
     case ValuePtrType::PtrType::NullPointer:{
-        diagnostic.error(tr("Null pointer dereference"),
-                         tr("Dereferencing a null pointer"),
-                         getValuePtrDescription(valuePtr));
+        diagnostic(Diag::Error_Exec_NullPointerException_ReadValue, getValuePtrDescription(valuePtr));
         return false;
     }/*break;*/
     case ValuePtrType::PtrType::LocalVariable:{
@@ -131,9 +127,7 @@ bool ExecutionContext::read(const ValuePtrType& valuePtr, ValueType& ty, QVarian
                     return true;
                 }
             }
-            diagnostic.error(tr("Dangling pointer dereference"),
-                             tr("Dereferencing a pointer to local variable after the function is finished"),
-                             getValuePtrDescription(valuePtr));
+            diagnostic(Diag::Error_Exec_DanglingPointerException_ReadValue, getValuePtrDescription(valuePtr));
             return false;
         }else{
             ty = frame.f.getLocalVariableType(valuePtr.valueIndex);
@@ -171,8 +165,8 @@ void ExecutionContext::checkUninitializedRead(ValueType ty, QVariant& readVal)
 {
     if(readVal.isValid())
         return;
-    diagnostic.warning(tr("Uninitialized read"),
-                       tr("Value is read before initialized"));
+    diagnostic(Diag::Warn_Exec_UninitializedRead);
+
     //default initialize it
     switch (ty) {
     case ValueType::Void: Q_UNREACHABLE();
@@ -185,7 +179,7 @@ void ExecutionContext::checkUninitializedRead(ValueType ty, QVariant& readVal)
     case ValueType::NodePtr:{
         NodePtrType ptr;
         ptr.head = getPtrSrcHead();
-        ptr.nodeIndex = 0;
+        ptr.nodeIndex = -1;
         readVal.setValue(ptr);
     }break;
     case ValueType::ValuePtr:{
@@ -246,9 +240,7 @@ bool ExecutionContext::takeAddress(const QString& name, ValuePtrType& val)
         }
     }
 
-    diagnostic.error(tr("Variable not found"),
-                     tr("Value read fail: variable with the given name cannot be found"),
-                     name);
+    diagnostic(Diag::Error_Exec_BadReference_VariableTakeAddress, name);
     return false;
 }
 
@@ -280,9 +272,7 @@ bool ExecutionContext::write(const QString& name, const ValueType& ty, const QVa
         const auto& nodeTy = root.getType().getNodeType(frame.irNodeTypeIndex);
         int nodeParameterIndex = nodeTy.getParameterIndex(name);
         if(Q_UNLIKELY(nodeParameterIndex >= 0)){
-            diagnostic.error(tr("Writing to read-only data"),
-                             tr("Node parameter is read only"),
-                             name);
+            diagnostic(Diag::Error_Exec_WriteToConst_WriteNodeParamByName, name);
             return false;
         }
     }
@@ -296,17 +286,10 @@ bool ExecutionContext::write(const QString& name, const ValueType& ty, const QVa
     }
 
     if(Q_UNLIKELY(!valPtr)){
-        diagnostic.error(tr("Variable not found"),
-                         tr("Value write fail: variable with the given name cannot be found"),
-                         name);
+        diagnostic(Diag::Error_Exec_BadReference_VariableWrite, name);
         return false;
     }else if(Q_UNLIKELY(actualTy != ty)){
-        diagnostic.error(tr("Type mismatch"),
-                         tr("Variable to write is in type %1 but the data to write is in type %2").arg(
-                             getTypeNameString(actualTy),
-                             getTypeNameString(ty)
-                           ),
-                         name);
+        diagnostic(Diag::Error_Exec_TypeMismatch_WriteByName, ty, actualTy, name);
         return false;
     }else{
         *valPtr = val;
@@ -323,9 +306,7 @@ bool ExecutionContext::write(const ValuePtrType& valuePtr, const ValueType& ty, 
 
     switch(valuePtr.ty){
     case ValuePtrType::PtrType::NullPointer:{
-        diagnostic.error(tr("Null pointer dereference"),
-                         tr("Dereferencing a null pointer"),
-                         getValuePtrDescription(valuePtr));
+        diagnostic(Diag::Error_Exec_NullPointerException_WriteValue, getValuePtrDescription(valuePtr));
         return false;
     }/*break;*/
     case ValuePtrType::PtrType::LocalVariable:{
@@ -341,9 +322,7 @@ bool ExecutionContext::write(const ValuePtrType& valuePtr, const ValueType& ty, 
                     break;
                 }
             }
-            diagnostic.error(tr("Dangling pointer dereference"),
-                             tr("Dereferencing a pointer to local variable after the function is finished"),
-                             getValuePtrDescription(valuePtr));
+            diagnostic(Diag::Error_Exec_DanglingPointerException_WriteValue, getValuePtrDescription(valuePtr));
             return false;
         }else{
             actualTy = frame.f.getLocalVariableType(valuePtr.valueIndex);
@@ -357,9 +336,7 @@ bool ExecutionContext::write(const ValuePtrType& valuePtr, const ValueType& ty, 
         valPtr = &nodeMembers[valuePtr.nodeIndex][valuePtr.valueIndex];
     }break;
     case ValuePtrType::PtrType::NodeROParameter:{
-        diagnostic.error(tr("Writing to read-only data"),
-                         tr("Attempt to write by a pointer to read only node parameter"),
-                         getValuePtrDescription(valuePtr));
+        diagnostic(Diag::Error_Exec_WriteToConst_WriteNodeParamByPointer, getValuePtrDescription(valuePtr));
         return false;
     }/*break;*/
     case ValuePtrType::PtrType::GlobalVariable:{
@@ -369,12 +346,7 @@ bool ExecutionContext::write(const ValuePtrType& valuePtr, const ValueType& ty, 
     }
 
     if(Q_UNLIKELY(actualTy != ty)){
-        diagnostic.error(tr("Type mismatch"),
-                         tr("Variable to write is in type %1 but the data to write is in type %2").arg(
-                             getTypeNameString(actualTy),
-                             getTypeNameString(ty)
-                           ),
-                         getValuePtrDescription(valuePtr));
+        diagnostic(Diag::Error_Exec_TypeMismatch_WriteByPointer, ty, actualTy, getValuePtrDescription(valuePtr));
         return false;
     }else{
         *valPtr = dest;
@@ -400,89 +372,85 @@ bool ExecutionContext::getRootNodePtr(NodePtrType& result)
 bool ExecutionContext::getParentNode(const NodePtrType& src, NodePtrType& result)
 {
     Q_ASSERT(!stack.empty());
+
+    if(Q_UNLIKELY(src.nodeIndex < 0)){
+        diagnostic(Diag::Error_Exec_BadNodePointer_TraverseToParent, getPointerSrcDescription(src.head));
+        return false;
+    }
+
     result.head = getPtrSrcHead();
     result.nodeIndex = root.getNode(src.nodeIndex).getParentIndex();
-    if(result.nodeIndex < 0){
-        // must be the root node
-        // set it to be itself silently
-        Q_ASSERT(result.nodeIndex == -1);
-        result.nodeIndex = 0;
-    }
     return true;
 }
 
-bool ExecutionContext::getChildNode(int nodeIndex, const QString& childName, NodePtrType& result, ValueType keyTy, const QVariant& primaryKey)
+bool ExecutionContext::getChildNode(const NodePtrType& src, const QString& childName, NodePtrType& result, ValueType keyTy, const QVariant& primaryKey)
 {
+    if(Q_UNLIKELY(src.nodeIndex < 0)){
+        diagnostic(Diag::Error_Exec_BadNodePointer_TraverseToChild, getPointerSrcDescription(src.head));
+        return false;
+    }
+
     int childTyIndex = root.getType().getNodeTypeIndex(childName);
     const IRNodeType& childTy = root.getType().getNodeType(childTyIndex);
     int primaryKeyIndex = childTy.getPrimaryKeyParameterIndex();
     if(Q_UNLIKELY(primaryKeyIndex < 0)){
-        diagnostic.error(tr("Invalid node traversal"),
-                         tr("Attempt to find child node by primary key but there is no primary key parameter"),
-                         childName);
+        diagnostic(Diag::Error_Exec_BadTraverse_ChildWithoutPrimaryKey, childName, getNodePtrDescription(src));
         return false;
     }
     if(Q_UNLIKELY(childTy.getParameterType(primaryKeyIndex) != keyTy)){
-        diagnostic.error(tr("Type mismatch"),
-                         tr("Primary key parameter is in type %1 but lookup uses %2").arg(
-                             getTypeNameString(childTy.getParameterType(primaryKeyIndex)),
-                             getTypeNameString(keyTy)
-                           ),
-                         childTy.getParameterName(primaryKeyIndex)
-                         );
+        diagnostic(Diag::Error_Exec_BadTraverse_PrimaryKeyTypeMismatch,
+                   keyTy,
+                   childTy.getParameterType(primaryKeyIndex),
+                   childTy.getName(),
+                   childTy.getParameterName(primaryKeyIndex),
+                   getNodePtrDescription(src));
         return false;
     }
-    const IRNodeInstance& inst = root.getNode(nodeIndex);
+    const IRNodeInstance& inst = root.getNode(src.nodeIndex);
     int childTyLocalIndex = inst.getLocalTypeIndex(childTyIndex);
     int childIndex = inst.getChildNodeIndex(childTyLocalIndex, primaryKeyIndex, primaryKey);
-    if(Q_UNLIKELY(childIndex < 0)){
-        diagnostic.error(tr("Invalid node traversal"),
-                         tr("No child node with given primary key is found"),
-                         childName);
-        return false;
-    }
 
     result.head = getPtrSrcHead();
     result.nodeIndex = childIndex;
     return true;
 }
 
-bool ExecutionContext::getChildNode(int nodeIndex, const QString& childName, NodePtrType& result, const QString& keyField, ValueType keyTy, const QVariant& keyValue)
+bool ExecutionContext::getChildNode(const NodePtrType& src, const QString& childName, NodePtrType& result, const QString& keyField, ValueType keyTy, const QVariant& keyValue)
 {
+    if(Q_UNLIKELY(src.nodeIndex < 0)){
+        diagnostic(Diag::Error_Exec_BadNodePointer_TraverseToChild, getPointerSrcDescription(src.head));
+        return false;
+    }
+
     int childTyIndex = root.getType().getNodeTypeIndex(childName);
     const IRNodeType& childTy = root.getType().getNodeType(childTyIndex);
     int paramIndex = childTy.getParameterIndex(keyField);
     if(Q_UNLIKELY(paramIndex < 0)){
-        diagnostic.error(tr("Invalid node traversal"),
-                         tr("No such parameter under child node"),
-                         keyField);
+        diagnostic(Diag::Error_Exec_BadTraverse_ParameterNotFound,
+                   childName,
+                   keyField,
+                   getNodePtrDescription(src));
         return false;
     }
     if(Q_UNLIKELY(!childTy.getParameterIsUnique(paramIndex))){
-        diagnostic.error(tr("Invalid node traversal"),
-                         tr("Specified parameter is not marked unique and cannot be used for node lookup"),
-                         keyField);
+        diagnostic(Diag::Error_Exec_BadTraverse_ParameterNotUnique,
+                   childName,
+                   keyField,
+                   getNodePtrDescription(src));
         return false;
     }
     if(Q_UNLIKELY(childTy.getParameterType(paramIndex) != keyTy)){
-        diagnostic.error(tr("Type mismatch"),
-                         tr("Key parameter is in type %1 but lookup uses %2").arg(
-                             getTypeNameString(childTy.getParameterType(paramIndex)),
-                             getTypeNameString(keyTy)
-                           ),
-                         keyField
-                         );
+        diagnostic(Diag::Error_Exec_BadTraverse_UniqueKeyTypeMismatch,
+                   keyTy,
+                   childTy.getParameterType(paramIndex),
+                   childName,
+                   keyField,
+                   getNodePtrDescription(src));
         return false;
     }
-    const IRNodeInstance& inst = root.getNode(nodeIndex);
+    const IRNodeInstance& inst = root.getNode(src.nodeIndex);
     int childTyLocalIndex = inst.getLocalTypeIndex(childTyIndex);
     int childIndex = inst.getChildNodeIndex(childTyLocalIndex, paramIndex, keyValue);
-    if(Q_UNLIKELY(childIndex < 0)){
-        diagnostic.error(tr("Invalid node traversal"),
-                         tr("No child node with given key is found"),
-                         childName);
-        return false;
-    }
 
     result.head = getPtrSrcHead();
     result.nodeIndex = childIndex;
@@ -591,9 +559,7 @@ void ExecutionContext::functionMainLoop()
 
         switch(stmt.ty){
         case StatementType::Unreachable:{
-            diagnostic.error(tr("Unreachable statement execution"),
-                             tr("Unreachable statement is executed"),
-                             tr("Statement %1").arg(stmtIndex));
+            diagnostic(Diag::Error_Exec_Unreachable);
             throw std::runtime_error("Unreachable");
         }/*break;*/
         case StatementType::Assignment:{
@@ -601,7 +567,7 @@ void ExecutionContext::functionMainLoop()
             // evaluate the expression first
             ValueType rhsTy = ValueType::Void;
             QVariant rhsVal;
-            bool isGood = evaluateExpression(assign.rvalueExprIndex, stmtIndex, rhsTy, rhsVal);
+            bool isGood = evaluateExpression(assign.rvalueExprIndex, rhsTy, rhsVal);
             if(Q_UNLIKELY(!isGood)){
                 throw std::runtime_error("Expression evaluation fail");
             }
@@ -610,23 +576,18 @@ void ExecutionContext::functionMainLoop()
             }else{
                 ValueType lhsTy = ValueType::Void;
                 QVariant lhsVal;
-                isGood = evaluateExpression(assign.lvalueExprIndex, stmtIndex, lhsTy, lhsVal);
+                isGood = evaluateExpression(assign.lvalueExprIndex, lhsTy, lhsVal);
                 if(Q_UNLIKELY(!isGood)){
                     throw std::runtime_error("Expression evaluation fail");
                 }
                 if(Q_UNLIKELY(lhsTy != ValueType::ValuePtr)){
-                    diagnostic.error(tr("Invalid LHS expression"),
-                                     tr("LHS of assignment evaluates to type %1 instead of value pointer").arg(
-                                         getTypeNameString(lhsTy)));
+                    diagnostic(Diag::Error_Exec_Assign_InvalidLHSType, lhsTy);
                     throw std::runtime_error("Expression type mismatch");
                 }
                 ValuePtrType ptr = lhsVal.value<ValuePtrType>();
                 isGood = write(ptr, rhsTy, rhsVal);
             }
             if(Q_UNLIKELY(!isGood)){
-                diagnostic.error(tr("Assignment fail"),
-                                 tr("Assignment statement fail to execute"),
-                                 tr("Statement %1").arg(stmtIndex));
                 throw std::runtime_error("Expression evaluation fail");
             }
         }break;
@@ -634,7 +595,7 @@ void ExecutionContext::functionMainLoop()
             const OutputStatement& outstmt = frame.f.getOutputStatement(stmt.statementIndexInType);
             ValueType rhsTy = ValueType::Void;
             QVariant rhsVal;
-            bool isGood = evaluateExpression(outstmt.exprIndex, stmtIndex, rhsTy, rhsVal);
+            bool isGood = evaluateExpression(outstmt.exprIndex, rhsTy, rhsVal);
             if(Q_UNLIKELY(!isGood)){
                 throw std::runtime_error("Expression evaluation fail");
             }
@@ -647,15 +608,11 @@ void ExecutionContext::functionMainLoop()
                     break;
                 }
                 if(Q_UNLIKELY(!isGood)){
-                    diagnostic.error(tr("Output failure"),
-                                     tr("Output error occured"),
-                                     rhsVal.toString());
+                    diagnostic(Diag::Error_Exec_Output_Unknown_String, rhsVal.toString());
                     throw std::runtime_error("Output failure");
                 }
             }else{
-                diagnostic.error(tr("Invalid output expression type"),
-                                 tr("Task output do not support expression of type %1").arg(
-                                     getTypeNameString(rhsTy)));
+                diagnostic(Diag::Error_Exec_Output_InvalidType, rhsTy);
                 throw std::runtime_error("Invalid output expression type");
             }
         }break;
@@ -663,9 +620,7 @@ void ExecutionContext::functionMainLoop()
             const CallStatement& call = frame.f.getCallStatement(stmt.statementIndexInType);
             int functionIndex = t.getFunctionIndex(call.functionName);
             if(Q_UNLIKELY(functionIndex < 0)){
-                diagnostic.error(tr("Function not found"),
-                                 tr("Function with the given name is not found"),
-                                 call.functionName);
+                diagnostic(Diag::Error_Exec_Call_BadReference, call.functionName);
                 throw std::runtime_error("Function not found");
             }
             const Function& f = t.getFunction(functionIndex);
@@ -673,26 +628,7 @@ void ExecutionContext::functionMainLoop()
             int numRequiredParam = f.getNumRequiredParameter();
             int numPassed = call.argumentExprList.size();
             if(Q_UNLIKELY(numPassed > numParam || numPassed < numRequiredParam)){
-                QString category = tr("Too many parameters for call");
-                QString msg;
-                if(numPassed > numParam){
-                    msg = tr("Function expects at most %1 parameters but call provides %2").arg(
-                                QString::number(numParam),
-                                QString::number(numPassed)
-                             );
-                }else{
-                    Q_ASSERT(numPassed < numRequiredParam);
-                    msg = tr("Function expects at least %1 parameters but call provides %2").arg(
-                                QString::number(numRequiredParam),
-                                QString::number(numPassed)
-                             );
-                }
-                diagnostic.error(category,
-                                 msg,
-                                 tr("Statement %1, calling %2").arg(
-                                     QString::number(stmtIndex),
-                                     call.functionName)
-                                 );
+                diagnostic(Diag::Error_Exec_Call_BadArgumentList_Count, call.functionName, numRequiredParam, numParam, numPassed);
                 throw std::runtime_error("Invalid call");
             }else{
                 QList<QVariant> params;
@@ -701,18 +637,13 @@ void ExecutionContext::functionMainLoop()
                     params.push_back(QVariant());
                     int exprIndex = call.argumentExprList.at(i);
                     ValueType ty = ValueType::Void;
-                    bool isGood = evaluateExpression(exprIndex, stmtIndex, ty, params.back());
+                    bool isGood = evaluateExpression(exprIndex, ty, params.back());
                     if(Q_UNLIKELY(!isGood)){
                         throw std::runtime_error("Expression evaluation fail");
                     }
                     if(Q_UNLIKELY(ty != f.getLocalVariableType(i))){
-                        diagnostic.error(tr("Type mismatch"),
-                                         tr("Function argument %1 should be in type %2 but expression evaluates to type %3").arg(
-                                             f.getLocalVariableName(i),
-                                             getTypeNameString(f.getLocalVariableType(i)),
-                                             getTypeNameString(ty)
-                                            )
-                                         );
+                        //Error_Exec_Call_BadArgumentList_Type
+                        diagnostic(Diag::Error_Exec_Call_BadArgumentList_Type, call.functionName, i, f.getLocalVariableName(i), f.getLocalVariableType(i), ty);
                         throw std::runtime_error("Type mismatch");
                     }
                 }
@@ -724,25 +655,25 @@ void ExecutionContext::functionMainLoop()
             const BranchStatement& branch = frame.f.getBranchStatement(stmt.statementIndexInType);
             bool isHandled = false;
             int labelAddress = -3;
+            int caseIndex = -2;
             for(int i = 0, num = branch.cases.size(); i < num; ++i){
                 const auto& brCase = branch.cases.at(i);
                 ValueType ty = ValueType::Void;
                 QVariant val;
-                bool isGood = evaluateExpression(brCase.exprIndex, stmtIndex, ty, val);
+                bool isGood = evaluateExpression(brCase.exprIndex, ty, val);
                 if(Q_UNLIKELY(!isGood)){
                     throw std::runtime_error("Expression evaluation fail");
                 }
                 switch (ty) {
                 default:{
-                    diagnostic.error(tr("Invalid branch condition type"),
-                                     tr("Unhandled type %1 for branch case condition").arg(
-                                         getTypeNameString(ty)));
+                    diagnostic(Diag::Error_Exec_Branch_InvalidConditionType, i, ty);
                     throw std::runtime_error("Type mismatch");
                 }/*break;*/
                 case ValueType::Int64:{
                     if(val.toLongLong() != 0){
                         isHandled = true;
                         labelAddress = brCase.stmtIndex;
+                        caseIndex = i;
                         break;
                     }
                 }break;
@@ -750,6 +681,7 @@ void ExecutionContext::functionMainLoop()
                     if(val.value<ValuePtrType>().ty != ValuePtrType::PtrType::NullPointer){
                         isHandled = true;
                         labelAddress = brCase.stmtIndex;
+                        caseIndex = i;
                         break;
                     }
                 }
@@ -758,19 +690,17 @@ void ExecutionContext::functionMainLoop()
                     break;
             }
             if(!isHandled){
+                caseIndex = -1;
                 labelAddress = branch.defaultStmtIndex;
             }
             if(Q_UNLIKELY(labelAddress < -2 || labelAddress >= frame.f.getNumStatement())){
-                diagnostic.error(tr("Invalid label"),
-                                 tr("Branch label address %1 is invalid").arg(
-                                     QString::number(labelAddress)));
+                diagnostic(Diag::Error_Exec_Branch_InvalidLabelAddress, caseIndex, labelAddress);
                 throw std::runtime_error("Invalid label");
             }
             if(labelAddress >= 0){
                 frame.stmtIndex = labelAddress;
             }else if(Q_UNLIKELY(labelAddress == -2)){
-                diagnostic.error(tr("Unreachable case in branch"),
-                                 tr("Branch reaches unreachable case"));
+                diagnostic(Diag::Error_Exec_Branch_Unreachable, caseIndex);
                 throw std::runtime_error("Unreachable");
             }
             // labelIndex == -1 is fall-through
@@ -782,7 +712,7 @@ void ExecutionContext::functionMainLoop()
     }// end of for loop
 }
 
-bool ExecutionContext::evaluateExpression(int expressionIndex, int stmtIndex, ValueType& ty, QVariant& val)
+bool ExecutionContext::evaluateExpression(int expressionIndex, ValueType& ty, QVariant& val)
 {
     Q_ASSERT(!stack.empty());
     const auto& frame = stack.top();
@@ -797,20 +727,11 @@ bool ExecutionContext::evaluateExpression(int expressionIndex, int stmtIndex, Va
     for(int i = 0, num = dependencies.size(); i < num; ++i){
         dependentVals.push_back(QVariant());
         ValueType actualTy = ValueType::Void;
-        if(Q_UNLIKELY(!evaluateExpression(dependencies.at(i), stmtIndex, actualTy, dependentVals.back())))
+        if(Q_UNLIKELY(!evaluateExpression(dependencies.at(i), actualTy, dependentVals.back())))
             return false;
         if(Q_UNLIKELY(actualTy != dependTys.at(i))){
-            diagnostic.error(tr("Type mismatch"),
-                             tr("Expression expects type %1 but got %2").arg(
-                                 getTypeNameString(dependTys.at(i)),
-                                 getTypeNameString(actualTy)
-                               ),
-                             tr("Statement %1, expression %2 depended by %3").arg(
-                                 QString::number(stmtIndex),
-                                 QString::number(dependencies.at(i)),
-                                 QString::number(expressionIndex)
-                                 )
-                             );
+            diagnostic(Diag::Error_Exec_TypeMismatch_ExpressionDependency,
+                       dependTys.at(i), actualTy, expressionIndex, dependencies.at(i));
             return false;
         }
     }
@@ -820,6 +741,9 @@ bool ExecutionContext::evaluateExpression(int expressionIndex, int stmtIndex, Va
 
 QString ExecutionContext::getNodeDescription(int nodeIndex)
 {
+    if(nodeIndex < 0){
+        return tr("invalid node");
+    }
     QString result = tr("node %1 ~").arg(nodeIndex);
     QStringList path;
     int currentNodeIndex = nodeIndex;

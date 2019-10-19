@@ -67,7 +67,7 @@ public:
 
     bool validate(DiagnosticEmitterBase& diagnostic, IRRootType& root);
 
-    static bool validateMemberName(DiagnosticEmitterBase& diagnostic, const QString& name);
+    static bool validateName(DiagnosticEmitterBase& diagnostic, const QString& name);
 
 private:
     struct Parameter{

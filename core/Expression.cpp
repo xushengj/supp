@@ -3,16 +3,6 @@
 #include "core/DiagnosticEmitter.h"
 #include "core/ExecutionContext.h"
 
-void ExpressionBase::emitTypeErrorDiagnostic(ExecutionContext &ctx, ValueType expectedTy, ValueType actualTy, QString exprText) const
-{
-    ctx.getDiagnostic().error(tr("Type mismatch"),
-                              tr("Expecting expression in type \"%1\" but get \"%2\"").arg(
-                                  getTypeNameString(expectedTy),
-                                  getTypeNameString(actualTy)
-                              ),
-                              exprText);
-}
-
 bool LiteralExpression::evaluate(ExecutionContext& ctx, QVariant& retVal, const QList<QVariant>& dependentExprResults) const
 {
     Q_UNUSED(ctx)
@@ -38,11 +28,11 @@ bool VariableReadExpression::evaluate(ExecutionContext& ctx, QVariant& retVal, c
     ValueType actualTy;
     QVariant val;
     if(ctx.read(variableName, actualTy, val)){
-        if(actualTy == ty){
+        if(Q_LIKELY(actualTy == ty)){
             retVal = val;
             return true;
         }else{
-            emitTypeErrorDiagnostic(ctx, ty, actualTy, variableName);
+            ctx.getDiagnostic()(Diag::Error_Exec_TypeMismatch_ReadByName, ty, actualTy, variableName);
             return false;
         }
     }
