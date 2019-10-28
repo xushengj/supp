@@ -173,7 +173,7 @@ void getMemberDeclaration(DiagnosticEmitterBase& diagnostic, const QJsonArray& j
 Function getFunction(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
 {
     QString name = json.value(STR_NAME).toString();
-    diagnostic.pushNode(name);
+    DiagnosticPathNode dnode(diagnostic, name);
     Function func(name);
     // parameters and local variables
     {
@@ -270,15 +270,14 @@ Function getFunction(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
             throw std::runtime_error("Unhandled statement type");
         }
     }
-
-    diagnostic.popNode();
+    dnode.pop();
     return func;
 }
 
 IRNodeType* getIRNodeType(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
 {
     QString name = json.value(STR_NAME).toString();
-    diagnostic.pushNode(name);
+    DiagnosticPathNode dnode(diagnostic,name);
     std::unique_ptr<IRNodeType> ptr(new IRNodeType(name));
     QJsonArray param = json.value(STR_IRNODE_PARAM).toArray();
     for(auto iter = param.begin(), iterEnd = param.end(); iter != iterEnd; ++iter){
@@ -296,14 +295,14 @@ IRNodeType* getIRNodeType(DiagnosticEmitterBase& diagnostic, const QJsonObject& 
     for(auto c: child){
         ptr->addChildNode(c.toString());
     }
-    diagnostic.popNode();
+    dnode.pop();
     return ptr.release();
 }
 
 IRRootType* getIRRootType(DiagnosticEmitterBase& diagnostic, const QJsonObject& json)
 {
     QString name = json.value(STR_NAME).toString();
-    diagnostic.pushNode(name);
+    DiagnosticPathNode dnode(diagnostic,name);
     std::unique_ptr<IRRootType> ptr(new IRRootType(name));
     QJsonArray nodeArray = json.value(STR_IRROOT_NODE).toArray();
     for(auto node: nodeArray){
@@ -312,7 +311,7 @@ IRRootType* getIRRootType(DiagnosticEmitterBase& diagnostic, const QJsonObject& 
         delete nodePtr;
     }
     ptr->setRootNodeType(json.value(STR_IRROOT_ROOT).toString());
-    diagnostic.popNode();
+    dnode.pop();
     return ptr.release();
 }
 
@@ -329,7 +328,7 @@ Bundle* Bundle::fromJson(const QByteArray& json, DiagnosticEmitterBase &diagnost
     try {
         std::unique_ptr<Bundle> ptr(new Bundle);
         // IR first
-        diagnostic.pushNode(tr("IR"));
+        DiagnosticPathNode dnode(diagnostic,tr("IR"));
         QJsonArray irArray = docObj.value(STR_TOP_IRSET).toArray();
         for(auto ir : irArray){
             IRRootType* irRoot = getIRRootType(diagnostic, ir.toObject());
@@ -343,7 +342,7 @@ Bundle* Bundle::fromJson(const QByteArray& json, DiagnosticEmitterBase &diagnost
             }
 
         }
-        diagnostic.popNode();//IR
+        dnode.pop();
 
         // then outputs
         QJsonArray outputArray = docObj.value(STR_TOP_OUTPUTSET).toArray();

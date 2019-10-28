@@ -18,7 +18,7 @@ bool Function::validate(DiagnosticEmitterBase& diagnostic, const Task& task)
 
     // check if name is good
     if(Q_LIKELY(IRNodeType::validateName(diagnostic, functionName))){
-        diagnostic.attachDescriptiveName(functionName);
+        diagnostic.setDetailedName(functionName);
     }else{
         isValidated = false;
     }
@@ -370,13 +370,13 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
         }
     };
     // check if there is a name clash among global variables
-    diagnostic.pushNode(tr("Global Variable"));
+    DiagnosticPathNode dnode_gv(diagnostic, tr("Global Variable"));
     checkDomain(globalVariables);
-    diagnostic.popNode();
+    dnode_gv.pop();
 
     // check if there is a name clash among functions
     functionNameToIndex.clear();
-    diagnostic.pushNode(tr("Function"));
+    DiagnosticPathNode dnode_func(diagnostic, tr("Function"));
     for(int i = 0, len = functions.size(); i < len; ++i){
         const QString& name = functions.at(i).getName();
         if(!IRNodeType::validateName(diagnostic, name)){
@@ -391,7 +391,7 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
             isValidated = false;
         }
     }
-    diagnostic.popNode();
+    dnode_func.pop();
 
     QQueue<int> reachableFunctions;
     RunTimeSizeArray<bool> functionReachable(static_cast<std::size_t>(functions.size()), false);
@@ -403,10 +403,10 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
     };
     // check if any callback reference is invalid
     bool isAnyCallbackSet = false;
-    diagnostic.pushNode(tr("Callback"));
+    DiagnosticPathNode dnode_cb(diagnostic, tr("Callback"));
     for(int passIndex = 0, numPass = nodeCallbacks.size(); passIndex < numPass; ++passIndex){
         const auto& list = nodeCallbacks.at(passIndex);
-        diagnostic.pushNode(tr("Pass %1").arg(passIndex));
+        DiagnosticPathNode dnode_pass(diagnostic, tr("Pass %1").arg(passIndex));
         for(int i = 0, len = root.getNumNodeType(); i < len; ++i){
             const auto& cbs = list.at(i);
             if(cbs.onEntryFunctionIndex >= 0){
@@ -430,9 +430,9 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
                 }
             }
         }
-        diagnostic.popNode();
+        dnode_pass.pop();
     }
-    diagnostic.popNode();
+    dnode_cb.pop();
 
     if(Q_UNLIKELY(!isAnyCallbackSet)){
         diagnostic(Diag::Error_Task_NoCallback);
@@ -443,10 +443,10 @@ bool Task::validate(DiagnosticEmitterBase& diagnostic)
         return isValidated;
 
     for(int i = 0, len = functions.size(); i < len; ++i){
-        diagnostic.pushNode(tr("Function[%1] %2").arg(QString::number(i)));
+        DiagnosticPathNode dnode(diagnostic, tr("Function %1").arg(QString::number(i)));
         // no short circuit
         isValidated = functions[i].validate(diagnostic, *this) && isValidated;
-        diagnostic.popNode();
+        dnode.pop();
     }
 
     // check if any function is unreachable (warning only)

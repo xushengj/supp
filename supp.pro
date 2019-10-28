@@ -22,6 +22,7 @@ SOURCES += \
     core/Expression.cpp \
     core/IRValidate.cpp \
     core/OutputHandler.cpp \
+    core/Parser.cpp \
     core/Task.cpp \
     ui/DocumentEdit.cpp \
     ui/DocumentWidget.cpp \
@@ -31,6 +32,7 @@ SOURCES += \
 
 HEADERS += \
     core/CLIDriver.h \
+    core/Parser.h \
     ui/PlainTextDocumentWidget.h \
     util/ADT.h \
     core/Bundle.h \

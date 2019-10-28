@@ -74,7 +74,7 @@ bool  IRNodeType::validate(DiagnosticEmitterBase& diagnostic, IRRootType &root)
 
     // if name is valid, update it to diagnostic
     if(Q_LIKELY(isNameValid)){
-        diagnostic.attachDescriptiveName(name);
+        diagnostic.setDetailedName(name);
     }
 
     // should never happen during correct execution
@@ -83,12 +83,12 @@ bool  IRNodeType::validate(DiagnosticEmitterBase& diagnostic, IRRootType &root)
     parameterNameToIndex.clear();
     // check all parameters
     for(int i = 0, len = parameterNameList.size(); i < len; ++i){
-        diagnostic.pushNode(tr(".%2([%1])").arg(i));
+        DiagnosticPathNode dnode(diagnostic, tr("Parameter %1").arg(i));
         const QString& paramName = parameterNameList.at(i);
         // check if parameter names are valid
         bool isNameValid = validateName(diagnostic, paramName);
         if(Q_LIKELY(isNameValid)){
-            diagnostic.attachDescriptiveName(paramName);
+            dnode.setDetailedName(paramName);
         }
         isValidated = isValidated && isNameValid;
         // check if parameter type is valid
@@ -105,7 +105,7 @@ bool  IRNodeType::validate(DiagnosticEmitterBase& diagnostic, IRRootType &root)
             isValidated = false;
         }
         // we do not implement other checks (e.g. parameter value constraint) yet
-        diagnostic.popNode();
+        dnode.pop();
     }
 
     // check primary key
@@ -173,10 +173,10 @@ bool IRRootType::validate(DiagnosticEmitterBase& diagnostic)
     }
     // must happen after nodeNameToIndex is properly initialized
     for(int i = 0, len = nodeList.size(); i < len; ++i){
-        diagnostic.pushNode(tr("[%1]%2").arg(i));
+        DiagnosticPathNode dnode(diagnostic, tr("Node Type %1").arg(i));
         // no short circuit
         isValidated = nodeList[i].validate(diagnostic, *this) && isValidated;
-        diagnostic.popNode();
+        dnode.pop();
     }
     return isValidated;
 }
@@ -189,7 +189,7 @@ bool IRNodeInstance::validate(DiagnosticEmitterBase& diagnostic, IRRootInstance&
     bool isValidated = true;
     const IRRootType& rootTy = root.getType();
     const IRNodeType& ty = rootTy.getNodeType(typeIndex);
-    diagnostic.attachDescriptiveName(ty.getName());
+    diagnostic.setDetailedName(ty.getName());
 
     // check if parameter is good
     if(Q_UNLIKELY(ty.getNumParameter() != parameters.size())){
@@ -230,7 +230,7 @@ bool IRNodeInstance::validate(DiagnosticEmitterBase& diagnostic, IRRootInstance&
     // non-fatal errors are tracked by isChildTypeGood
     for(int i = 0, cnt = childNodeList.size(); i < cnt; ++i){
         int childNodeIndex = childNodeList.at(i);
-        diagnostic.pushNode(tr("/[%1]%2").arg(i).arg("%1"));
+        DiagnosticPathNode dnode(diagnostic, tr("Child %1").arg(i));
         IRNodeInstance& child = root.getNode(childNodeIndex);
         bool isChildGood = child.validate(diagnostic, root);
         int localTyIndex = getLocalTypeIndex(child.getTypeIndex());
@@ -244,7 +244,7 @@ bool IRNodeInstance::validate(DiagnosticEmitterBase& diagnostic, IRRootInstance&
                 isChildTypeGood.at(localTyIndex) = false;
             }
         }
-        diagnostic.popNode();
+        dnode.pop();
     }
     // check for key unique constraints and construct perParamHash in childTypeList
     // do not check this property if anything is already failed
@@ -284,7 +284,7 @@ bool IRNodeInstance::validate(DiagnosticEmitterBase& diagnostic, IRRootInstance&
 
 bool IRRootInstance::validate(DiagnosticEmitterBase& diagnostic)
 {
-    diagnostic.pushNode(tr("~"));
+    DiagnosticPathNode dnode(diagnostic, tr("Root"));
     if(nodeList.empty()){
         diagnostic(Diag::Error_IR_BadTree_EmptyTree);
         isValidated = false;
@@ -351,6 +351,6 @@ bool IRRootInstance::validate(DiagnosticEmitterBase& diagnostic)
         isValidated = nodeList.front().validate(diagnostic, *this);
     }
 
-    diagnostic.popNode();
+    dnode.pop();
     return isValidated;
 }

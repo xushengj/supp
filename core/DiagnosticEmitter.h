@@ -139,13 +139,56 @@ struct ValueTypeWrapper{
 };
 Q_DECLARE_METATYPE(ValueTypeWrapper)
 
+class DiagnosticPathNode
+{
+    friend class DiagnosticEmitterBase;
+public:
+    DiagnosticPathNode(DiagnosticEmitterBase& d, const QString& pathName);
+
+    DiagnosticPathNode(const DiagnosticPathNode&) = delete;
+    DiagnosticPathNode(DiagnosticPathNode&&) = delete;
+
+    ~DiagnosticPathNode(){
+        if(hierarchyIndex >= 0){
+            release();
+        }
+    }
+    void pop(){
+        if(hierarchyIndex >= 0){
+            hierarchyIndex = -1;
+            release();
+        }
+    }
+
+    void setDetailedName(const QString& name){
+        detailedName = name;
+    }
+
+    const QString& getPathName()const {return pathName;}
+    const QString& getDetailedName()const {return detailedName;}
+    const DiagnosticPathNode* getPrev()const {return prev;}
+    int getHierarchyIndex() const {return hierarchyIndex;}
+private:
+    void release();
+
+    DiagnosticEmitterBase& d;
+    DiagnosticPathNode* prev;
+    QString pathName;
+    QString detailedName;
+    int hierarchyIndex;
+};
+
 class DiagnosticEmitterBase
 {
+    friend class DiagnosticPathNode;
 public:
     virtual ~DiagnosticEmitterBase(){}
-    virtual void pushNode(QString coarseDescription)    {pathList.push_back(coarseDescription);}
-    virtual void attachDescriptiveName(QString name)    {pathList.back() = pathList.back().arg(name);}
-    virtual void popNode()                              {pathList.pop_back();}
+
+    /**
+     * @brief setDetailedName set detailed name on last pushed node
+     * @param name the detailed name to put
+     */
+    void setDetailedName(const QString& name){Q_ASSERT(head); head->setDetailedName(name);}
 
     template<typename... Args>
     void operator()(Diag::ID id, Args&&... arg){
@@ -157,6 +200,13 @@ public:
     void operator()(Diag::ID id){
         diagnosticHandle(id, QList<QVariant>());
     }
+
+protected:
+    /**
+     * @brief currentHead get most recently pushed node. Intended for child
+     * @return pointer to path node; null if no node pushed
+     */
+    const DiagnosticPathNode* currentHead(){return head;}
 
 private:
     // we now only accept ValueType, int (any index), and QString as parameter to diagnostic
@@ -179,8 +229,9 @@ private:
 
 protected:
     virtual void diagnosticHandle(Diag::ID id, const QList<QVariant>& data){Q_UNUSED(id) Q_UNUSED(data)}
-protected:
-    QStringList pathList;
+private:
+    DiagnosticPathNode* head = nullptr;
+    int hierarchyCount = 0;
 };
 
 // just for testing purpose; we will have GUI oriented implementation later on

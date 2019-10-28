@@ -483,11 +483,11 @@ void ExecutionContext::mainExecutionEntry()
     isInExecution = true;
 
     for(int passIndex = 0, numPass = t.getNumPass(); passIndex < numPass; ++passIndex){
-        diagnostic.pushNode(tr("Pass %1").arg(passIndex));
-        diagnostic.pushNode(tr("/~"));
+        DiagnosticPathNode dnode(diagnostic, tr("Pass %1").arg(passIndex));
+        DiagnosticPathNode dnodeRoot(diagnostic, tr("Root"));
         nodeTraverseEntry(passIndex, 0);
-        diagnostic.popNode();// "/~"
-        diagnostic.popNode();// "Pass %1"
+        dnodeRoot.pop();// "Root"
+        dnode.pop();// "Pass %1"
     }
 }
 
@@ -496,28 +496,28 @@ void ExecutionContext::nodeTraverseEntry(int passIndex, int nodeIndex)
     const IRNodeInstance& inst = root.getNode(nodeIndex);
     int nodeTypeIndex = inst.getTypeIndex();
     const IRNodeType& ty = root.getType().getNodeType(nodeTypeIndex);
-    diagnostic.attachDescriptiveName(ty.getName());
+    diagnostic.setDetailedName(ty.getName());
     int entryCB = t.getNodeCallback(nodeTypeIndex, Task::CallbackType::OnEntry, passIndex);
     int exitCB = t.getNodeCallback(nodeTypeIndex, Task::CallbackType::OnExit, passIndex);
 
     if(entryCB >= 0){
-        diagnostic.pushNode(tr("|Entry %1"));
+        DiagnosticPathNode dnode(diagnostic, tr("Entry callback (%1)").arg(entryCB));
         pushFunctionStackframe(entryCB, nodeIndex);
         functionMainLoop();
-        diagnostic.popNode();
+        dnode.pop();
     }
 
     for(int i = 0, numChild = inst.getNumChildNode(); i < numChild; ++i){
-        diagnostic.pushNode(tr("/[%1]%2").arg(i));
+        DiagnosticPathNode dnode(diagnostic, tr("Child %1").arg(i));
         nodeTraverseEntry(passIndex, inst.getChildNodeByOrder(i));
-        diagnostic.popNode();
+        dnode.pop();
     }
 
     if(exitCB >= 0){
-        diagnostic.pushNode(tr("|Exit %1"));
+        DiagnosticPathNode dnode(diagnostic, tr("Exit callback (%1)").arg(exitCB));
         pushFunctionStackframe(exitCB, nodeIndex);
         functionMainLoop();
-        diagnostic.popNode();
+        dnode.pop();
     }
 }
 
@@ -529,6 +529,7 @@ void ExecutionContext::pushFunctionStackframe(int functionIndex, int nodeIndex, 
     // (just for performance)
     const Function& f = t.getFunction(functionIndex);
     if(f.getNumStatement() > 0){
+        diagnostic.setDetailedName(f.getName());
         CallStackEntry entry(f, functionIndex, nodeIndex, root.getNode(nodeIndex).getTypeIndex(), activationIndex);
         int localVariableCnt = f.getNumLocalVariable();
         entry.localVariables.reserve(localVariableCnt);
