@@ -9,6 +9,7 @@
 #include <QStringRef>
 #include <QRegularExpression>
 
+#include <functional>
 #include <utility>
 
 class DiagnosticEmitterBase;
@@ -122,6 +123,9 @@ private:
         QStringList matchPairName; // just for debugging purpose
         QStringList ignoreList;
         int longestMatchPairStartStringLength;
+        bool isLineMode;//!< if true, top level driver will split the text into lines (or paragraphs) before pattern matching
+                        //!< this mode is faster but all patterns must at most consume single line
+                        //!< (not possible to match patterns across lines / paragraphs)
 
         /**
          * @brief getMatchingEndAdvanceDistance returns how many characters to skip so that one jumps to the first character after the end mark of matching match pair
@@ -211,9 +215,29 @@ private:
      * @brief performValueTransform is for transforming the parsed raw value to parser node parameters
      * @param paramName list of parameter names
      * @param rawValues the raw values populated by match()
+     * @param valueTransform describes how each parameters get their value from rawValues
      * @return list of parameter values
      */
-    static QStringList performValueTransform(const QStringList& paramName, const QHash<QString,QString>& rawValues, const QList<QList<PatternValueSubExpression>>& valueTransform);
+    static QStringList performValueTransform(
+            const QStringList& paramName,
+            const QHash<QString,QString>& rawValues,
+            const QList<QList<PatternValueSubExpression>>& valueTransform
+    );
+
+    /**
+     * @brief performValueTransform variant that take an expression solver callback
+     * @param paramName list of parameter names
+     * @param rawValues the raw values populated by match()
+     * @param valueTransform describes how each parameters get their value from rawValues
+     * @param externReferenceSolver used to resolve variable references that are not in rawValues
+     * @return
+     */
+    static QStringList performValueTransform(
+            const QStringList& paramName,
+            const QHash<QString,QString>& rawValues,
+            const QList<QList<PatternValueSubExpression>>& valueTransform,
+            std::function<QString(const QString& expr, int paramIndex)> externReferenceSolver
+    );
 
     /**
      * @brief findLongestMatchingPattern tries all listed pattern on beginning of text and find the one that consumes more characters than others
@@ -224,13 +248,73 @@ private:
      */
     std::pair<int,int> findLongestMatchingPattern(const QList<Pattern>& patterns, QStringRef text, QHash<QString,QString>& values) const;
 
+    /**
+     * @brief The ParserNodeData struct contains record of a parser node generated during pattern matching
+     */
+    struct ParserNodeData{
+        int nodeTypeIndex;      //!< index in Parser::nodes
+        int parentIndex;        //!< parent parser node in the list containning this item
+        int indexWithinParent;  //!< index of node within parent
+        int childNodeCount;     //!< How many child node do this node has
+        QStringList params;
+    };
+    QList<ParserNodeData> patternMatch(const QString& text, DiagnosticEmitterBase& diagnostic) const;
+
+    struct IRBuildContext{
+        QList<ParserNodeData> parserNodes;
+        QHash<int,QHash<int,QList<int>>> parserNodeChildListCache;//!< [ParserNodeIndex][ChildParserNodeTypeIndex] -> [list of child node index in parserNodes]
+
+
+        /**
+         * @brief getNodeChildList helper function to access parserNodeChildListCache; build the list if not found in cache
+         * @param parentIndex parent index where list of child is needed
+         * @param childNodeTypeIndex child parser node type index; -1 if all child is needed
+         * @return reference to child node index (in parserNodes) list
+         */
+        const QList<int>& getNodeChildList(int parentIndex, int childNodeTypeIndex);
+
+        /**
+         * @brief solveExternReference helper function for solve extern variable reference from parser node specified by nodeIndex
+         *
+         * each reference should be in the form <NodeExpr>::<ParamName>
+         * no other expression allowed
+         * <NodeExpr>:
+         *      parent node: ..
+         *      child node:
+         *          <ChildNodeName>                 (for accessing the only child)
+         *          <ChildNodeName>[<LookupExpr>]   (for accessing child in that type or for lookup)
+         *          [<index expr>]                  (for accessing child by order / occurrence)
+         *
+         *      <LookupExpr>:
+         *                pure number (no +/-): index (0 based) of child node in given type
+         *                <ParamName>=="<ParamValue>": key based lookup
+         *                (+/-)pure number: (only when accessing ../<Child>[+/-offset]) index based search; 0 is the last node with given type BEFORE or IS current node
+         *       <index expr>:
+         *                pure number (no +/-): index (0 based) of node in given parent, no matter which type
+         *                (+/-)pure number:     offset of node in given parent (index = <index of this node under parent> + offset)
+         *
+         * chaining node reference: use '/', e.g. ../../Child1[0]/Child2[Key="Value"]
+         *
+         * @param p the Parser parent
+         * @param expr the extern variable reference expression
+         * @param nodeIndex the parser node index in parserNodes where the expr is evaluated
+         * @return pair of <isGood, result string>
+         */
+        std::pair<bool,QString> solveExternReference(const Parser &p, const QString& expr, int nodeIndex);
+    };
+
+private:
+    // actual data
+
     struct Node{
         QString nodeName;
         QList<Pattern> patterns;
         QList<Pattern> earlyExitPatterns;
         QStringList paramName;
         QString combineToIRNodeTypeName;
-        QList<QList<PatternValueSubExpression>> combineValueTransform;
+        // for combine value transform, for each parameter, we allow multiple expression
+        // the result of first successful evaluation is used as final result
+        QList<QList<QList<PatternValueSubExpression>>> combineValueTransform; //!< [ParamIndex][ExprIndex][List of sub expressions]
         QList<int> allowedChildNodeIndexList;
     };
 

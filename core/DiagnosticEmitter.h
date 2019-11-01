@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 #include <QVariantList>
 #include <QMetaEnum>
@@ -108,6 +109,10 @@ public:
         Error_Exec_Branch_InvalidLabelAddress,              //!< [CaseIndex][LabelMarkedStatementIndex]
         Error_Exec_Branch_Unreachable,                      //!< [CaseIndex]
 
+        Error_Parser_Matching_Ambiguous,                    //!< [InputString], [list of tuple of [NodeName][NodeParamStringList][PatternIndex]]
+        Error_Parser_Matching_NoMatch,                      //!< (no argument)
+        Error_Parser_Matching_GarbageAtEnd,                 //!< (no argument)
+
         Error_Json_UnknownType_String,      //!< [TypeString]
         Error_Json_UnsupportedLiteralType,  //!< (no argument)
         Error_Json_UnexpectedInitializer,   //!< [VarName][VarType]
@@ -201,6 +206,11 @@ public:
         diagnosticHandle(id, QList<QVariant>());
     }
 
+    // the form that directly passes the arguments
+    void handle(Diag::ID id, const QList<QVariant>& arg){
+        diagnosticHandle(id, arg);
+    }
+
 protected:
     /**
      * @brief currentHead get most recently pushed node. Intended for child
@@ -209,7 +219,7 @@ protected:
     const DiagnosticPathNode* currentHead(){return head;}
 
 private:
-    // we now only accept ValueType, int (any index), and QString as parameter to diagnostic
+    // we now only accept ValueType, int (any index), QString, and QStringList as parameter to diagnostic
     void appendParam(QList<QVariant>& param, ValueType val){
         QVariant v;
         v.setValue(ValueTypeWrapper{val});
@@ -220,6 +230,9 @@ private:
     }
     void appendParam(QList<QVariant>& param, const QString& val){
         param.push_back(QVariant(val));
+    }
+    void appendParam(QList<QVariant>& param, const QStringList& val){
+        param.push_back(val);
     }
     template<typename T, typename... Args>
     void appendParam(QList<QVariant>& param, const T& val, Args&&... arg){
