@@ -200,7 +200,11 @@ private:
     };
     struct Pattern{
         QList<SubPattern> elements;
-        QList<QList<PatternValueSubExpression>> valueTransform;//!< for each parameter of parser node (outer index), how is the final value made by concatenating sub expressions
+        QList<QList<PatternValueSubExpression>> valueTransform;//!< for each parameter of parser node (outer index),
+                                                               //!< how is the final value made by concatenating sub expressions
+        int priorityScore;  //!< a score calculated based on complexity of pattern
+                            //!< (number of sub patterns, length of literals, etc)
+                            //!< A pattern with higher score is chosen if it matches same length of text with other patterns
     };
 
     /**
@@ -225,18 +229,17 @@ private:
     );
 
     /**
-     * @brief performValueTransform variant that take an expression solver callback
-     * @param paramName list of parameter names
+     * @brief performValueTransform variant that take an expression solver callback. This must only work with one parameter at a time.
+     * @param paramName the name of parameter
      * @param rawValues the raw values populated by match()
-     * @param valueTransform describes how each parameters get their value from rawValues
+     * @param valueTransform describes how the parameter get its value from rawValues
      * @param externReferenceSolver used to resolve variable references that are not in rawValues
      * @return
      */
-    static QStringList performValueTransform(
-            const QStringList& paramName,
+    static QString performValueTransform(const QString& paramName,
             const QHash<QString,QString>& rawValues,
-            const QList<QList<PatternValueSubExpression>>& valueTransform,
-            std::function<QString(const QString& expr, int paramIndex)> externReferenceSolver
+            const QList<PatternValueSubExpression>& valueTransform,
+            std::function<QString(const QString &)> externReferenceSolver
     );
 
     /**
@@ -308,13 +311,20 @@ private:
 
     struct Node{
         QString nodeName;
-        QList<Pattern> patterns;
+        QList<Pattern> patterns;            //!< nodes with no pattern starts implicitly, i.e. when child node pattern matches.
+                                            //!< These nodes should not have parameters
         QList<Pattern> earlyExitPatterns;
         QStringList paramName;
-        QString combineToIRNodeTypeName;
-        // for combine value transform, for each parameter, we allow multiple expression
-        // the result of first successful evaluation is used as final result
-        QList<QList<QList<PatternValueSubExpression>>> combineValueTransform; //!< [ParamIndex][ExprIndex][List of sub expressions]
+
+        QString combineToIRNodeTypeName;    //!< similar to ParserNode::combineToNodeTypeName,
+                                            //!< but this string is empty only if this ParserNode do not get lowered to IRNode
+                                            //!< In otherwords, if there is an IR node with the same name,
+                                            //!< ParserNode::combineToNodeTypeName can be empty but this one should contain
+                                            //!< the name of IR node
+
+        QList<QList<QList<PatternValueSubExpression>>> combineValueTransform;   //!< [ParamIndex][ExprIndex][List of sub expressions]
+                                                                                //!< for combine value transform, for each parameter, we allow multiple expression
+                                                                                //!< the result of first successful evaluation is used as final result
         QList<int> allowedChildNodeIndexList;
     };
 

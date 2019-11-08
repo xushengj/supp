@@ -109,9 +109,13 @@ public:
         Error_Exec_Branch_InvalidLabelAddress,              //!< [CaseIndex][LabelMarkedStatementIndex]
         Error_Exec_Branch_Unreachable,                      //!< [CaseIndex]
 
-        Error_Parser_Matching_Ambiguous,                    //!< [InputString], [list of tuple of [NodeName][NodeParamStringList][PatternIndex]]
+        Warn_Parser_Matching_Ambiguous,                     //!< [InputString], [list of tuple of [NodeName][NodeParamStringList][PatternIndex]]
+
         Error_Parser_Matching_NoMatch,                      //!< (no argument)
         Error_Parser_Matching_GarbageAtEnd,                 //!< (no argument)
+        Error_Parser_IRBuild_BadRoot,                       //!< (no argument)
+        Error_Parser_IRBuild_BadTransform,                  //!< [ParserNodeName][IRNodeName][IRNodeParamName]
+        Error_Parser_IRBuild_BadCast,                       //!< [ParserNodeName][IRNodeName][IRNodeParamName][IRNodeParameterType][ParserNodeDataString]
 
         Error_Json_UnknownType_String,      //!< [TypeString]
         Error_Json_UnsupportedLiteralType,  //!< (no argument)

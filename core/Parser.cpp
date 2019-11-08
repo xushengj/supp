@@ -3,7 +3,9 @@
 #include "core/IR.h"
 #include "core/DiagnosticEmitter.h"
 
+#include <QQueue>
 #include <QRegularExpressionMatch>
+#include <QSet>
 #include <QStack>
 #include <QStringRef>
 
@@ -75,9 +77,14 @@ QList<Parser::ParserNodeData> Parser::patternMatch(const QString& text, Diagnost
         }
     }
 
+    // if we did not find any pattern match under a ParserNode, we don't bother to check any child with that type for implicit start
+    // this set keeps track of which ParserNode types we don't want to waste time on
+    QSet<int> implicitStartIgnoreTypeSet;
+
     // helper function
     // in should be back of textUnit
     auto advance = [&](QStringRef& in, int dist)->bool{
+        implicitStartIgnoreTypeSet.clear();
         in = in.mid(dist);
         context.removeLeadingIgnoredString(in);
         if(in.isEmpty()){
@@ -145,67 +152,142 @@ QList<Parser::ParserNodeData> Parser::patternMatch(const QString& text, Diagnost
                 int nodeTypeIndex;
                 int patternIndex;
                 QHash<QString,QString> rawValues;
+                QList<int> implicitParentNodeTypeIndexOnPath; // list of ParserNode with implicit start that lead to this match
             };
 
             QList<PatternMatchRecord> candidates;
             int farthestAdvanceDist = 0;
+            int bestPatternScore = -1;
 
-            rawValues.clear();
-            for(int child : parent.allowedChildNodeIndexList){
-                const Node& childNodeTy = nodes.at(child);
+            auto helper_tryMatchChild = [&](int childParserNodeTypeIndex, const QList<int>& path)->void{
+                const Node& childNodeTy = nodes.at(childParserNodeTypeIndex);
                 int childPatternIndex = -1;
                 int childAdvanceDist = 0;
                 std::tie(childPatternIndex, childAdvanceDist) = findLongestMatchingPattern(childNodeTy.patterns, in, rawValues);
                 if(childPatternIndex >= 0){
                     // we have a pattern that matches
-                    if(childAdvanceDist >= farthestAdvanceDist){
-                        if(childAdvanceDist > farthestAdvanceDist){
-                            // this pattern is better than any existing ones
-                            farthestAdvanceDist = childAdvanceDist;
-                            candidates.clear();
-
-                        }
+                    int currentPatternScore = childNodeTy.patterns.at(childPatternIndex).priorityScore;
+                    bool isAbsolutelyBetter = (childAdvanceDist > farthestAdvanceDist || (childAdvanceDist == farthestAdvanceDist && currentPatternScore > bestPatternScore));
+                    if(isAbsolutelyBetter){
+                        // this pattern is absolutely better than previous one; no need to keep previous results
+                        farthestAdvanceDist = childAdvanceDist;
+                        bestPatternScore = currentPatternScore;
+                        candidates.clear();
+                    }
+                    if(isAbsolutelyBetter || (childAdvanceDist == farthestAdvanceDist && currentPatternScore == bestPatternScore)){
+                        // at least not worse than previous ones
                         // save result of this pattern match
                         PatternMatchRecord record;
-                        record.nodeTypeIndex = child;
+                        record.nodeTypeIndex = childParserNodeTypeIndex;
                         record.patternIndex = childPatternIndex;
                         record.rawValues.swap(rawValues);
+                        record.implicitParentNodeTypeIndexOnPath = path;
                         candidates.push_back(record);
                     }
                 }
                 rawValues.clear();
+            };
+
+            rawValues.clear();
+            int implicitStartChildCount = 0;
+            for(int child : parent.allowedChildNodeIndexList){
+                const Node& childNodeTy = nodes.at(child);
+                if(childNodeTy.patterns.isEmpty()){
+                    // these nodes are handled later on
+                    Q_ASSERT(childNodeTy.paramName.empty());
+                    implicitStartChildCount += 1;
+                    continue;
+                }
+
+                helper_tryMatchChild(child, QList<int>());
             }
 
-            if(Q_UNLIKELY(candidates.size() > 1)){
-                // ambiguous scenario
-                // report error
-                QList<QVariant> errorArgs;
-                QStringRef ambiguousText = in.left(farthestAdvanceDist);
-                context.removeTrailingIgnoredString(ambiguousText);
-                errorArgs.push_back(ambiguousText.toString());
-                for(const auto& data: candidates){
-                    QVariantList vlist; // [NodeName][NodeParamStringList][PatternIndex]
-                    const Node& childNodeTy = nodes.at(data.nodeTypeIndex);
-                    vlist.push_back(childNodeTy.nodeName);
-                    QStringList params = performValueTransform(
-                                childNodeTy.paramName,
-                                data.rawValues,
-                                childNodeTy.patterns.at(data.patternIndex).valueTransform);
-                    vlist.push_back(params);
-                    vlist.push_back(data.patternIndex);
-                    errorArgs.push_back(vlist);
+            if(candidates.isEmpty() && implicitStartChildCount > 1){
+                // check childs that may start implicitly
+                QQueue<QList<int>> pathQueue;
+                pathQueue.reserve(implicitStartChildCount);
+                for(int child : parent.allowedChildNodeIndexList){
+                    // skip those we already exited from
+                    if(implicitStartIgnoreTypeSet.contains(child))
+                        continue;
+
+                    const Node& childNodeTy = nodes.at(child);
+                    if(childNodeTy.patterns.isEmpty() && !childNodeTy.allowedChildNodeIndexList.isEmpty()){
+                        pathQueue.enqueue(QList<int>({child}));
+                    }
                 }
-                diagnostic.handle(Diag::Error_Parser_Matching_Ambiguous, errorArgs);
-                return QList<ParserNodeData>();
-            }else if(candidates.isEmpty()){
+                while(!pathQueue.isEmpty()){
+                    // WARNING: pathQueue.head() is not safe to "cache" since enqueue can invalidate old one
+                    int tailParserNodeTypeIndex = pathQueue.head().back();
+                    const Node& ty = nodes.at(tailParserNodeTypeIndex);
+                    // go through all its child
+                    // if a child has patterns (not implicit start), try these patterns
+                    // otherwise, enqueue another path with that child at back
+                    for(int child : ty.allowedChildNodeIndexList){
+                        if(implicitStartIgnoreTypeSet.contains(child))
+                            continue;
+
+                        const Node& childNodeTy = nodes.at(child);
+                        if(childNodeTy.patterns.isEmpty()){
+                            Q_ASSERT(childNodeTy.paramName.empty());
+                            QList<int> newPath(pathQueue.head());
+                            newPath.push_back(child);
+                            pathQueue.enqueue(newPath);
+                        }else{
+                            helper_tryMatchChild(child, pathQueue.head());
+                        }
+                    }
+                    pathQueue.dequeue();
+                }
+            }
+
+            if(candidates.isEmpty()){
                 // no pattern match
                 // go to parent
+                if(parent.patterns.isEmpty()){
+                    implicitStartIgnoreTypeSet.insert(parentData.nodeTypeIndex);
+                }
                 parentIndex = parentData.parentIndex;
                 continue;
             }else{
-                // single match
-                Q_ASSERT(candidates.size() == 1);
+                if(Q_UNLIKELY(candidates.size() > 1)){
+                    // ambiguous scenario; we will just select the first pattern
+                    // report a warning though
+                    QList<QVariant> errorArgs;
+                    QStringRef ambiguousText = in.left(farthestAdvanceDist);
+                    context.removeTrailingIgnoredString(ambiguousText);
+                    errorArgs.push_back(ambiguousText.toString());
+                    for(const auto& data: candidates){
+                        QVariantList vlist; // [NodeName][NodeParamStringList][PatternIndex]
+                        const Node& childNodeTy = nodes.at(data.nodeTypeIndex);
+                        vlist.push_back(childNodeTy.nodeName);
+                        QStringList params = performValueTransform(
+                                    childNodeTy.paramName,
+                                    data.rawValues,
+                                    childNodeTy.patterns.at(data.patternIndex).valueTransform);
+                        vlist.push_back(params);
+                        vlist.push_back(data.patternIndex);
+                        errorArgs.push_back(vlist);
+                    }
+                    diagnostic.handle(Diag::Warn_Parser_Matching_Ambiguous, errorArgs);
+                }
+
+                // at least one match; pick the first
                 const PatternMatchRecord& record = candidates.front();
+
+                // if there are implicitly started nodes, create them first
+                for(int nodeOnPath : record.implicitParentNodeTypeIndexOnPath){
+                    ParserNodeData intermediateNodeData;
+                    intermediateNodeData.parentIndex = parentIndex;
+                    intermediateNodeData.nodeTypeIndex = nodeOnPath;
+                    intermediateNodeData.indexWithinParent = parserNodes[parentIndex].childNodeCount++;
+                    intermediateNodeData.childNodeCount = 0;
+                    intermediateNodeData.params.clear();// implicitly started node won't have parameters
+                    parentIndex = parserNodes.size();
+                    parserNodes.push_back(intermediateNodeData);
+                }
+
+                // create the end node
                 const Node& childNodeTy = nodes.at(record.nodeTypeIndex);
                 ParserNodeData endData;
                 endData.parentIndex = parentIndex;
@@ -438,9 +520,59 @@ std::pair<bool,QString> Parser::IRBuildContext::solveExternReference(const Parse
 
 const QList<int>& Parser::IRBuildContext::getNodeChildList(int parentIndex, int childNodeTypeIndex)
 {
-    // TODO
-    QList<int>& ref = parserNodeChildListCache[parentIndex][childNodeTypeIndex];
-    return ref;
+    auto& nodeCache = parserNodeChildListCache[parentIndex];
+    {
+        auto iter = nodeCache.find(childNodeTypeIndex);
+        if(iter != nodeCache.end())
+            return iter.value();
+    }
+    // okay, it is not in cache
+    // let's compute it
+
+    if(nodeCache.empty()){
+        // we have not yet built any list
+        // let's prepare the list of all child nodes at the same time
+        QList<int> allChildList;
+        QList<int> wantedChildList;
+        // we go through all ParserNodes after the node specified by parentIndex:
+        // 1. If a node's parent index is smaller than parentIndex, it means that we already went outside the subtree under parent
+        //    and allChildList is already complete
+        // 2. If a node's parent index is equal to parentIndex, add it to allChildList since it is a direct child
+        // 3. If a node's parent index is larger than parentIndex, it is an indirect child
+        for(int curNodeIndex = parentIndex+1, numNode = parserNodes.size(); curNodeIndex < numNode; ++curNodeIndex){
+            const auto& d = parserNodes.at(curNodeIndex);
+            if(d.parentIndex == parentIndex){
+                allChildList.push_back(curNodeIndex);
+
+                // if we also looks for child with specific type, we add them here
+                if(childNodeTypeIndex != -1 && d.nodeTypeIndex == childNodeTypeIndex){
+                    wantedChildList.push_back(curNodeIndex);
+                }
+            }else if(d.parentIndex < parentIndex){
+                break;
+            }
+        }
+        nodeCache.insert(-1, allChildList);
+        if(childNodeTypeIndex != -1){
+            nodeCache.insert(childNodeTypeIndex, wantedChildList);
+        }
+        // we may have childNodeTypeIndex == -1 here
+        return nodeCache[childNodeTypeIndex];
+    }else{
+        // we already have the list of all children
+        // build the wanted list from the list of all direct childs
+        Q_ASSERT(childNodeTypeIndex != -1);
+        auto iter_allChild = nodeCache.find(-1);
+        Q_ASSERT(iter_allChild != nodeCache.end());
+        QList<int> wantedChildList;
+        for(int child: iter_allChild.value()){
+            const auto& d = parserNodes.at(child);
+            if(d.nodeTypeIndex == childNodeTypeIndex){
+                wantedChildList.push_back(child);
+            }
+        }
+        return nodeCache.insert(childNodeTypeIndex, wantedChildList).value();
+    }
 }
 
 IRRootInstance* Parser::parse(const QString& text, const IRRootType& ir, DiagnosticEmitterBase& diagnostic) const
@@ -451,24 +583,151 @@ IRRootInstance* Parser::parse(const QString& text, const IRRootType& ir, Diagnos
         return nullptr;
 
     // start to build IR tree
-    // TODO
-
     std::unique_ptr<IRRootInstance> ptr(new IRRootInstance(ir));
+    // root node to root node
+    const ParserNodeData& rootData = ctx.parserNodes.front();
+    const Node& rootNodeTy = nodes.at(rootData.nodeTypeIndex);
+    if(rootNodeTy.combineToIRNodeTypeName.isEmpty()){
+        diagnostic(Diag::Error_Parser_IRBuild_BadRoot);
+        return nullptr;
+    }
 
+    auto helper_buildIRNode = [&](int parserNodeIndex, int irNodeTypeIndex, int parentIRNodeIndex)->int{
+        const IRNodeType& irNodeTy = ptr->getType().getNodeType(irNodeTypeIndex);
 
+        // step 1: insert node
+        int irNodeIndex = ptr->addNode(irNodeTypeIndex);
+        auto& node = ptr->getNode(irNodeIndex);
+        node.setParent(parentIRNodeIndex);
+        if(parentIRNodeIndex != -1){
+            ptr->getNode(parentIRNodeIndex).addChildNode(irNodeIndex);
+        }
+
+        // step 2: prepare value transform
+        QList<QVariant> params;
+        const ParserNodeData& nodeData = ctx.parserNodes.at(parserNodeIndex);
+        const Node& nodeTy = nodes.at(nodeData.nodeTypeIndex);
+        Q_ASSERT(nodeTy.combineValueTransform.empty() || nodeTy.combineValueTransform.size() == irNodeTy.getNumParameter());
+        QHash<QString,QString> nodeStrData;
+        for(int i = 0, n = nodeTy.paramName.size(); i < n; ++i){
+            nodeStrData.insert(nodeTy.paramName.at(i), nodeData.params.at(i));
+        }
+        for(int i = 0, n = irNodeTy.getNumParameter(); i < n; ++i){
+            QString value;
+            QString irParamName = irNodeTy.getParameterName(i);
+            if(nodeTy.combineValueTransform.empty() || nodeTy.combineValueTransform.at(i).empty()){
+                // search for ParserNode parameter with the same name
+                // use it as the final value
+                int idx = nodeTy.paramName.indexOf(irParamName);
+                value = nodeData.params.at(idx);
+            }else{
+                const auto& exprList = nodeTy.combineValueTransform.at(i);
+                bool isAnyExprGood = false;
+                for(const auto& expr : exprList){
+                    bool isExprGood = true;
+                    value = performValueTransform(irParamName, nodeStrData, expr, [&](const QString& e)->QString{
+                        QString retVal;
+                        bool isThisOneGood = true;
+                        std::tie(isThisOneGood, retVal) = ctx.solveExternReference(*this, e, parserNodeIndex);
+                        isExprGood = isExprGood && isThisOneGood;
+                        return retVal;
+                    });
+                    if(isExprGood){
+                        isAnyExprGood = true;
+                        break;
+                    }
+                }
+                if(Q_UNLIKELY(!isAnyExprGood)){
+                    diagnostic(Diag::Error_Parser_IRBuild_BadTransform, nodeTy.nodeName, irNodeTy.getName(), irParamName);
+                    return -1;
+                }
+            }
+            // cast value to IR type
+            QVariant irValue;
+            ValueType irValTy = irNodeTy.getParameterType(i);
+            switch(irValTy){
+            default: Q_UNREACHABLE(); break;
+            case ValueType::String:{
+                irValue = value;
+            }break;
+            case ValueType::Int64:{
+                bool isGood = true;
+                irValue.setValue(value.toLongLong(&isGood));
+                if(!isGood){
+                    diagnostic(Diag::Error_Parser_IRBuild_BadCast, nodeTy.nodeName, irNodeTy.getName(), irParamName, irValTy, value);
+                    return -1;
+                }
+            }break;
+            }
+
+            params.push_back(irValue);
+        }
+        node.setParameters(params);
+
+        return irNodeIndex;
+    };
+    int rootNodeIRTyIndex = ir.getNodeTypeIndex(rootNodeTy.combineToIRNodeTypeName);
+    int rootNodeIRIndex = helper_buildIRNode(0, rootNodeIRTyIndex, -1);
+    Q_ASSERT(rootNodeIRIndex == 0);
+
+    struct NodeIndexRecord{
+        int parserNodeIndex;
+        int irNodeIndex;
+    };
+    QList<NodeIndexRecord> parentStack;
+    parentStack.push_back(NodeIndexRecord{0,0});
+
+    for(int parserNodeIndex = 1, n = ctx.parserNodes.size(); parserNodeIndex < n; ++parserNodeIndex){
+        const ParserNodeData& nodeData = ctx.parserNodes.at(parserNodeIndex);
+        const Node& nodeTy = nodes.at(nodeData.nodeTypeIndex);
+
+        // ignore parser-only nodes
+        if(nodeTy.combineToIRNodeTypeName.isEmpty())
+            continue;
+
+        int irNodeTypeIndex = ir.getNodeTypeIndex(nodeTy.combineToIRNodeTypeName);
+        Q_ASSERT(irNodeTypeIndex >= 0);
+
+        // find the correct parent IR node
+        // keep popping parentStack until the stack top appears in the parent of current parser node
+        int curParentParserNodeIndex = nodeData.parentIndex;
+        while(!parentStack.isEmpty() && (parentStack.back().parserNodeIndex != curParentParserNodeIndex)){
+            if(parentStack.back().parserNodeIndex > curParentParserNodeIndex){
+                parentStack.pop_back();
+            }else{
+                curParentParserNodeIndex = ctx.parserNodes.at(curParentParserNodeIndex).parentIndex;
+            }
+        }
+        Q_ASSERT(!parentStack.isEmpty());
+        Q_ASSERT(parentStack.back().parserNodeIndex == curParentParserNodeIndex);
+        int irNodeIndex = helper_buildIRNode(parserNodeIndex, irNodeTypeIndex, parentStack.back().irNodeIndex);
+        if(irNodeIndex == -1){
+            // error occurred
+            return nullptr;
+        }
+        parentStack.push_back(NodeIndexRecord{parserNodeIndex, irNodeIndex});
+    }
+
+    if(ptr->validate(diagnostic)){
+        return ptr.release();
+    }
+
+    // IR fails to validate in this case
     return nullptr;
 }
 
 std::pair<int,int> Parser::findLongestMatchingPattern(const QList<Pattern>& patterns, QStringRef text, QHash<QString,QString>& values) const
 {
     int bestPatternIndex = -1;
+    int bestPatternScore = -1;
     int numConsumed = 0;
     QHash<QString, QString> curRawValue;
 
     for(int i = 0, num = patterns.size(); i < num; ++i){
         int curConsumeCount = match(text, curRawValue, context, patterns.at(i).elements);
-        if(curConsumeCount > numConsumed){
+        if(curConsumeCount > numConsumed || (curConsumeCount == numConsumed && patterns.at(i).priorityScore > bestPatternScore)){
             bestPatternIndex = i;
+            bestPatternScore = patterns.at(i).priorityScore;
             numConsumed = curConsumeCount;
             values.swap(curRawValue);
         }
@@ -817,13 +1076,8 @@ QStringList Parser::performValueTransform(const QStringList& paramName, const QH
                     value.append(expr.data);
                 }break;
                 case PatternValueSubExpression::OpType::ValueReference:{
-                    if(rawValues.count(expr.data) > 0){
-                        value.append(rawValues.value(expr.data));
-                    }else{
-                        int index = paramName.indexOf(expr.data);
-                        Q_ASSERT(index >= 0 && index < i); // otherwise this should fail in validation check
-                        value.append(result.at(index));
-                    }
+                    Q_ASSERT(rawValues.count(expr.data) > 0);
+                    value.append(rawValues.value(expr.data));
                 }break;
                 }
             }
@@ -834,43 +1088,29 @@ QStringList Parser::performValueTransform(const QStringList& paramName, const QH
     return result;
 }
 
-QStringList Parser::performValueTransform(const QStringList& paramName,
+QString Parser::performValueTransform(const QString &paramName,
         const QHash<QString,QString>& rawValues,
-        const QList<QList<PatternValueSubExpression>>& valueTransform,
-        std::function<QString(const QString &, int)> externReferenceSolver)
+        const QList<PatternValueSubExpression> &valueTransform,
+        std::function<QString(const QString &)> externReferenceSolver)
 {
-    QStringList result;
-    Q_ASSERT(paramName.size() == valueTransform.size());
+    if(valueTransform.isEmpty())
+        return rawValues.value(paramName);
 
-    for(int i = 0, num = paramName.size(); i < num; ++i){
-        const QString& param = paramName.at(i);
-        const auto& list = valueTransform.at(i);
-        QString value;
-        if(list.isEmpty()){
-            // direct search from raw values
-            value = rawValues.value(param);
-        }else{
-            for(const auto& expr : list){
-                switch(expr.ty){
-                case PatternValueSubExpression::OpType::Literal:{
-                    value.append(expr.data);
-                }break;
-                case PatternValueSubExpression::OpType::ValueReference:{
-                    if(rawValues.count(expr.data) > 0){
-                        value.append(rawValues.value(expr.data));
-                    }else if(paramName.contains(expr.data)){
-                        int index = paramName.indexOf(expr.data);
-                        Q_ASSERT(index >= 0 && index < i); // otherwise this should fail in validation check
-                        value.append(result.at(index));
-                    }else{
-                        value.append(externReferenceSolver(expr.data, i));
-                    }
-                }break;
-                }
+    QString value;
+    for(const auto& expr : valueTransform){
+        switch(expr.ty){
+        case PatternValueSubExpression::OpType::Literal:{
+            value.append(expr.data);
+        }break;
+        case PatternValueSubExpression::OpType::ValueReference:{
+            if(rawValues.count(expr.data) > 0){
+                value.append(rawValues.value(expr.data));
+            }else{
+                value.append(externReferenceSolver(expr.data));
             }
+        }break;
         }
-        result.push_back(value);
     }
 
-    return result;
+    return value;
 }
