@@ -25,9 +25,11 @@ public:
         Warn_Exec_UninitializedRead,        //!< (no argument)
         Warn_Task_UnreachableFunction,      //!< [FunctionName]
 
-        Error_IR_BadName_Empty,                             //!< (no argument)
-        Error_IR_BadName_IllegalChar,                       //!< [CharAsString][NameString]
-        Error_IR_BadName_UnprintableChar,                   //!< (no argument)
+        Error_BadName_EmptyString,                          //!< (no argument)
+        Error_BadName_IllegalChar,                          //!< [CharAsString][NameString]
+        Error_BadName_UnprintableChar,                      //!< (no argument)
+        Error_BadName_PureNumber,                           //!< [NameString][NumberInt]
+
         Error_IR_BadType_BadTypeForNodeParam,               //!< [ParamName][ParamType]
         Error_IR_NameClash_NodeParam,                       //!< [ParamName][FirstParamIndex][SecondParamIndex]
         Error_IR_NameClash_NodeType,                        //!< [NodeTypeName]
@@ -109,11 +111,54 @@ public:
         Error_Exec_Branch_InvalidLabelAddress,              //!< [CaseIndex][LabelMarkedStatementIndex]
         Error_Exec_Branch_Unreachable,                      //!< [CaseIndex]
 
+        Error_Parser_NameClash_MatchPair,                       //!< [MatchPairName][FirstIndex][SecondIndex]
+        Error_Parser_NameClash_ParserNode,                      //!< [NodeName][1stIndex][2ndIndex]
+        Error_Parser_NameClash_ParserNodeParameter,             //!< [ParameterName][1stIndex][2ndIndex]
+        Error_Parser_BadMatchPair_EmptyStartString,             //!< [StartStringIndex]
+        Error_Parser_BadMatchPair_EmptyEndString,               //!< [EndStringIndex]
+        Error_Parser_BadMatchPair_StartStringConflict,          //!< [StartString][1stMatchPairName][1stMatchPair1Index][2ndMatchPairName][2ndMatchPairIndex]
+        Error_Parser_BadMatchPair_EndStringDuplicated,          //!< [MatchPairIndex][EndString][FirstIndex][SecondIndex]
+        Error_Parser_BadMatchPair_NoStartString,                //!< (no argument)
+        Error_Parser_BadMatchPair_NoEndString,                  //!< (no argument)
+        Error_Parser_BadExprMatchPair_EmptyStartString,         //!< (no argument)
+        Error_Parser_BadExprMatchPair_EmptyEndString,           //!< (no argument)
+        Error_Parser_BadExprMatchPair_StartStringInIgnoreList,  //!< (no argument)
+        Error_Parser_BadExprMatchPair_EndStringInIgnoreList,    //!< (no argument)
+        Error_Parser_BadReference_IRNodeName,                   //!< [IRNodeName]
+        Error_Parser_BadReference_ParserNodeName,               //!< [ParserNodeName]
+        Error_Parser_MultipleOverwrite,                         //!< [ValueName][FirstIndex][SecondIndex]
+        Error_Parser_BadConversionToIR_IRParamNotInitialized,   //!< [ParameterName]
+        Error_Parser_BadConversionToIR_IRParamNotExist,         //!< [ParameterName]
+        Error_Parser_BadRoot_BadReferenceByParserNodeName,      //!< [RootParserNodeName]
+        Error_Parser_BadRoot_NotConvertingToIR,                 //!< [RootParserNodeName]
+        Error_Parser_BadTree_BadChildNodeReference,             //!< [ParentParserNodeName][ChildParserNodeName]
+
+        Error_Parser_BadPattern_Expr_MissingEngineNameEndMark,          //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_NoRawLiteralAfterEngineSpecifier,  //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_ExpectingExpressionContent,        //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_UnterminatedQuote,                 //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_RawStringMissingQuoteStart,        //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_UnterminatedExpr,                  //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_EmptyBody,                         //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_GarbageAtEnd,                      //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_UnrecognizedEngine,                //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_BadRegex,                          //!< [StringDiagnostic][RegexErrorString]
+        Error_Parser_BadPattern_Expr_DuplicatedDefinition,              //!< [ValueName][FirstSubpatternIndex][SecondSubpatternIndex]
+        Error_Parser_BadPattern_Expr_BadTerminatorInclusionSpecifier,   //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_BadNameForReference,               //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_InvalidNextPatternForInclusion,    //!< [StringDiagnostic]
+        Error_Parser_BadPattern_EmptyPattern,                           //!< (no argument)
+
+        Warn_Parser_MissingInitializer,                     //!< [ParameterName]
+        Warn_Parser_Unused_Overwrite,                       //!< [OverwriteValueName][OverwriteRecordIndex]
+        Warn_Parser_Unused_PatternValue,                    //!< [PatternValueName][SubPatternIndex]
+        Warn_Parser_DuplicatedReference_ChildParserNode,    //!< [ParentParserNodeName][ChildParserNodeName]
+        Warn_Parser_UnreachableNode,                        //!< [ParserNodeName]
+
         Warn_Parser_Matching_Ambiguous,                     //!< [InputString], [list of tuple of [NodeName][NodeParamStringList][PatternIndex]]
 
         Error_Parser_Matching_NoMatch,                      //!< (no argument)
         Error_Parser_Matching_GarbageAtEnd,                 //!< (no argument)
-        Error_Parser_IRBuild_BadRoot,                       //!< (no argument)
         Error_Parser_IRBuild_BadTransform,                  //!< [ParserNodeName][IRNodeName][IRNodeParamName]
         Error_Parser_IRBuild_BadCast,                       //!< [ParserNodeName][IRNodeName][IRNodeParamName][IRNodeParameterType][ParserNodeDataString]
 
@@ -147,6 +192,22 @@ struct ValueTypeWrapper{
     ValueType ty;
 };
 Q_DECLARE_METATYPE(ValueTypeWrapper)
+
+/**
+ * @brief The ExpressionDiagnosticRecord struct describes a diagnostic to an expression string
+ *
+ * Each diagnostic can carry an error interval and an info interval.
+ * Info interval may and may not overlap with error interval.
+ * If it makes no sense for an interval, both start and end index should be zero.
+ */
+struct StringDiagnosticRecord{
+    QString str;
+    int infoStart;
+    int infoEnd;
+    int errorStart;
+    int errorEnd;
+};
+Q_DECLARE_METATYPE(StringDiagnosticRecord)
 
 class DiagnosticPathNode
 {
@@ -223,7 +284,7 @@ protected:
     const DiagnosticPathNode* currentHead(){return head;}
 
 private:
-    // we now only accept ValueType, int (any index), QString, and QStringList as parameter to diagnostic
+    // we now only accept following types as parameter to diagnostic
     void appendParam(QList<QVariant>& param, ValueType val){
         QVariant v;
         v.setValue(ValueTypeWrapper{val});
@@ -237,6 +298,17 @@ private:
     }
     void appendParam(QList<QVariant>& param, const QStringList& val){
         param.push_back(val);
+    }
+    void appendParam(QList<QVariant>& param, const StringDiagnosticRecord& val){
+        QVariant v;
+        Q_ASSERT(val.infoStart >= 0);
+        Q_ASSERT(val.infoStart <= val.infoEnd);
+        Q_ASSERT(val.infoEnd <= val.str.length());
+        Q_ASSERT(val.errorStart >= 0);
+        Q_ASSERT(val.errorStart <=val.errorEnd);
+        Q_ASSERT(val.errorEnd <= val.str.length());
+        v.setValue(val);
+        param.push_back(v);
     }
     template<typename T, typename... Args>
     void appendParam(QList<QVariant>& param, const T& val, Args&&... arg){

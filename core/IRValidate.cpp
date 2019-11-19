@@ -10,7 +10,7 @@
 
 namespace{
 const char ILLEGAL_CHARS_1[] = {
-    '.', '[', ']', '(', ')', '<', '>', '\\', '/', '=', '*', '~', '`', '\'', '"', ',', '?', '@', '#', '$', '%', '^', '&', '|', ':', ';', ' '
+    '.', '[', ']', '(', ')', '<', '>', '\\', '/', '+', '=', '*', '~', '`', '\'', '"', ',', '?', '@', '#', '$', '%', '^', '&', '|', ':', ';', ' '
 };
 
 struct EscapedIllegalCharRecord{
@@ -35,13 +35,13 @@ bool IRNodeType::validateName(DiagnosticEmitterBase& diagnostic, const QString &
     bool isValid = true;
     int len = name.length();
     if(Q_UNLIKELY(len == 0)){
-        diagnostic(Diag::Error_IR_BadName_Empty);
+        diagnostic(Diag::Error_BadName_EmptyString);
         return false;
     }
     for(int i = 0, len = sizeof(ILLEGAL_CHARS_1)/sizeof(char); i < len; ++i){
         QChar c(ILLEGAL_CHARS_1[i]);
         if(Q_UNLIKELY(name.contains(c, Qt::CaseInsensitive))){
-            diagnostic(Diag::Error_IR_BadName_IllegalChar, QString(c), name);
+            diagnostic(Diag::Error_BadName_IllegalChar, QString(c), name);
             isValid = false;
         }
     }
@@ -50,17 +50,25 @@ bool IRNodeType::validateName(DiagnosticEmitterBase& diagnostic, const QString &
         if(Q_UNLIKELY(name.contains(c, Qt::CaseInsensitive))){
             QString charStr('\'');
             charStr.append(ILLEGAL_CHARS_2[i].escapeChar);
-            diagnostic(Diag::Error_IR_BadName_IllegalChar, charStr, name);
+            diagnostic(Diag::Error_BadName_IllegalChar, charStr, name);
             isValid = false;
         }
     }
     for(const auto& c: name){
         if(Q_UNLIKELY(!c.isPrint())){
-            diagnostic(Diag::Error_IR_BadName_UnprintableChar);
+            diagnostic(Diag::Error_BadName_UnprintableChar);
             isValid = false;
             break;
         }
     }
+    bool isPureNumber = false;
+    // check if it is a number, even if it overflows
+    int num = static_cast<int>(name.toLongLong(&isPureNumber));
+    if(Q_UNLIKELY(isPureNumber)){
+        diagnostic(Diag::Error_BadName_PureNumber, name, num);
+        isValid = false;
+    }
+
     return isValid;
 }
 

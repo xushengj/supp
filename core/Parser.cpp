@@ -24,14 +24,865 @@ Parser* Parser::getParser(const ParserPolicy& policy, const IRRootType& ir, Diag
         isValidated = false;
     }
 
+    std::unique_ptr<Parser> ptr(new Parser);
+
+    // construct ParseContext
+
     // check match pairs:
     // 1. match pairs should have unique names (and the name must be good)
-    // 2. no match pair string (either start or end) can be identical to any other match pair string (either start or end)
+    // 2. match pair start strings can not be identical to any other match pair start strings.
+    //    HOWEVER: match pair end strings can be identical to any other strings (both match pair start string or end string, even ignore string)
+    //    Match pair end determination depends on context
+    QHash<QString, int> matchPairStartToIndex;      //!< for each match pair start string, what's the match pair index
+    QHash<QString, int> matchPairNameToIndex;       //!< for each match pair name, what's the index
+    int longestMatchPairStartStringLength = 0;
+    QList<int> matchPairScoreList;
+    matchPairScoreList.reserve(policy.matchPairs.size());
+    ptr->context.matchPairName.reserve(policy.matchPairs.size());
+    ptr->context.matchPairStarts.reserve(policy.matchPairs.size());
+    ptr->context.matchPairEnds.reserve(policy.matchPairs.size());
+    for(int matchPairIndex = 0, n = policy.matchPairs.size(); matchPairIndex < n; ++matchPairIndex){
+        const auto& mp = policy.matchPairs.at(matchPairIndex);
+        const QString& name = mp.name;
+        DiagnosticPathNode pathNode(diagnostic, tr("MatchPair %1").arg(matchPairIndex));
+        if(Q_LIKELY(IRNodeType::validateName(diagnostic, name))){
+            ptr->context.matchPairName.push_back(name);
+            pathNode.setDetailedName(name);
+            auto iter = matchPairNameToIndex.find(name);
+            if(Q_LIKELY(iter == matchPairNameToIndex.end())){
+                matchPairNameToIndex.insert(name, matchPairIndex);
+            }else{
+                diagnostic(Diag::Error_Parser_NameClash_MatchPair, name, iter.value(), matchPairIndex);
+                isValidated = false;
+            }
+        }else{
+            isValidated = false;
+        }
 
-    return nullptr;
+        QStringList startList;
+        int matchPairStartMinLength = 0;
+        for(int i = 0, n = mp.startEquivalentSet.size(); i < n; ++i){
+            const QString& start = mp.startEquivalentSet.at(i);
+            if(Q_UNLIKELY(start.isEmpty())){
+                diagnostic(Diag::Error_Parser_BadMatchPair_EmptyStartString, i);
+                isValidated = false;
+            }else{
+                if(matchPairStartMinLength == 0 || matchPairStartMinLength > start.length()){
+                    matchPairStartMinLength = start.length();
+                }
+                auto iter = matchPairStartToIndex.find(start);
+                if(Q_LIKELY(iter == matchPairStartToIndex.end())){
+                    matchPairStartToIndex.insert(start, i);
+                    startList.push_back(start);
+
+                    if(start.length() > longestMatchPairStartStringLength){
+                        longestMatchPairStartStringLength = start.length();
+                    }
+                }else{
+                    diagnostic(Diag::Error_Parser_BadMatchPair_StartStringConflict,
+                               start, policy.matchPairs.at(iter.value()).name, iter.value(), name, i);
+                    isValidated = false;
+                }
+            }
+        }
+        // for end marks, we only require that they are not redundant
+        QStringList endList;
+        int matchPairEndMinLength = 0;
+        for(int i = 0, n = mp.endEquivalentSet.size(); i < n; ++i){
+            const QString& end = mp.endEquivalentSet.at(i);
+            if(Q_UNLIKELY(end.isEmpty())){
+                diagnostic(Diag::Error_Parser_BadMatchPair_EmptyEndString, i);
+                isValidated = false;
+            }else{
+                if (matchPairEndMinLength == 0 || matchPairEndMinLength > end.length()){
+                    matchPairEndMinLength = end.length();
+                }
+                int firstIndex = endList.indexOf(end);
+                if(Q_LIKELY(firstIndex == -1)){
+                    endList.push_back(end);
+                }else{
+                    diagnostic(Diag::Error_Parser_BadMatchPair_EndStringDuplicated, matchPairIndex, end, firstIndex, i);
+                    isValidated = false;
+                }
+            }
+        }
+        // also send an error if a match pair do not have start mark or end mark
+        if(Q_UNLIKELY(matchPairStartMinLength == 0)){
+            diagnostic(Diag::Error_Parser_BadMatchPair_NoStartString);
+            isValidated = false;
+        }
+        if(Q_UNLIKELY(matchPairEndMinLength == 0)){
+            diagnostic(Diag::Error_Parser_BadMatchPair_NoEndString);
+            isValidated = false;
+        }
+
+        ptr->context.matchPairStarts.push_back(startList);
+        ptr->context.matchPairEnds.push_back(endList);
+        int matchPairScore = matchPairStartMinLength + matchPairEndMinLength;
+        matchPairScoreList.push_back(matchPairScore);
+    }
+    ptr->context.longestMatchPairStartStringLength = longestMatchPairStartStringLength;
+
+    ptr->context.ignoreList.reserve(policy.ignoreList.size());
+    for(const QString& ignoreStr : policy.ignoreList){
+        // remove duplicate or empty ones
+        // maybe generate a warning instead? or other tools can simply drop them
+        if(ignoreStr.isEmpty() || ptr->context.ignoreList.contains(ignoreStr)){
+            continue;
+        }
+        ptr->context.ignoreList.push_back(ignoreStr);
+    }
+
+    // checks on exprStartMark and exprEndMark
+    // requirement:
+    // 1. none of the marker can be empty string
+    // 2. none of the marker can be identical to one item in ignore list
+    if(Q_UNLIKELY(policy.exprStartMark.isEmpty())){
+        diagnostic(Diag::Error_Parser_BadExprMatchPair_EmptyStartString);
+        isValidated = false;
+    }else if(Q_UNLIKELY(ptr->context.ignoreList.contains(policy.exprStartMark))){
+        diagnostic(Diag::Error_Parser_BadExprMatchPair_StartStringInIgnoreList);
+        isValidated = false;
+    }else{
+        ptr->context.exprStartMark = policy.exprStartMark;
+    }
+    if(Q_UNLIKELY(policy.exprEndMark.isEmpty())){
+        diagnostic(Diag::Error_Parser_BadExprMatchPair_EmptyEndString);
+        isValidated = false;
+    }else if(Q_UNLIKELY(ptr->context.ignoreList.contains(policy.exprEndMark))){
+        diagnostic(Diag::Error_Parser_BadExprMatchPair_EndStringInIgnoreList);
+        isValidated = false;
+    }else{
+        ptr->context.exprEndMark = policy.exprEndMark;
+    }
+    matchPairStartToIndex.clear();
+    matchPairNameToIndex.clear();
+
+    // start processing ParserNode
+    QHash<QString, int> nodeNameToIndex;
+    for(int i = 0, n = policy.nodes.size(); i < n; ++i){
+        const ParserNode& src = policy.nodes.at(i);
+        Node dest;
+        DiagnosticPathNode pathNode(diagnostic, tr("Node %1").arg(i));
+
+        if(Q_LIKELY(IRNodeType::validateName(diagnostic, src.name))){
+            pathNode.setDetailedName(src.name);
+            dest.nodeName = src.name;
+            auto iter = nodeNameToIndex.find(src.name);
+            if(Q_LIKELY(iter == nodeNameToIndex.end())){
+                nodeNameToIndex.insert(src.name, i);
+            }else{
+                diagnostic(Diag::Error_Parser_NameClash_ParserNode, src.name, iter.value(), i);
+                isValidated = false;
+            }
+        }else{
+            isValidated = false;
+        }
+
+        dest.paramName.reserve(src.parameterNameList.size());
+        for(int i = 0, n = src.parameterNameList.size(); i < n; ++i){
+            const QString& paramName = src.parameterNameList.at(i);
+            if(Q_LIKELY(IRNodeType::validateName(diagnostic, paramName))){
+                int index = dest.paramName.indexOf(paramName);
+                if(Q_LIKELY(index == -1)){
+                    dest.paramName.push_back(paramName);
+                }else{
+                    diagnostic(Diag::Error_Parser_NameClash_ParserNodeParameter, paramName, index, i);
+                    isValidated = false;
+                }
+            }else{
+                isValidated = false;
+            }
+        }
+
+        // validate and convert all patterns
+        dest.patterns.reserve(src.patterns.size());
+        for(int i = 0, n = src.patterns.size(); i < n; ++i){
+            const ParserNode::Pattern& srcPattern = src.patterns.at(i);
+
+            dest.patterns.push_back(Parser::Pattern());
+            Parser::Pattern& destPattern = dest.patterns.back();
+            DiagnosticPathNode pathNode(diagnostic, tr("Pattern %1").arg(i));
+
+            QHash<QString, int> valueNameToIndex;
+            if(Q_UNLIKELY(!ptr->context.parsePatternString(srcPattern.patternString, destPattern.elements, valueNameToIndex, diagnostic))){
+                // skip this pattern
+                isValidated = false;
+                continue;
+            }
+            // set priority score
+            int patternScore = srcPattern.priorityScore;
+            if(patternScore == 0){
+                patternScore = computePatternScore(destPattern.elements, matchPairScoreList);
+            }
+            destPattern.priorityScore = patternScore;
+
+            QHash<QString, int> overwriteValueNameToIndex; // for each overwrite value, what's the overwrite record index
+            QList<QList<PatternValueSubExpression>> overwriteValueTransformList;
+            QSet<QString> referencedValues;
+            for(int i = 0, n = srcPattern.valueOverwriteList.size(); i < n; ++i){
+                DiagnosticPathNode pathNode(diagnostic, tr("Overwrite record %1").arg(i));
+                const auto& record = srcPattern.valueOverwriteList.at(i);
+                const QString& valueName = record.paramName;
+                pathNode.setDetailedName(valueName);
+                auto iter = overwriteValueNameToIndex.find(valueName);
+                if(Q_LIKELY(iter == overwriteValueNameToIndex.end())){
+                    overwriteValueNameToIndex.insert(valueName, i);
+                }else{
+                    diagnostic(Diag::Error_Parser_MultipleOverwrite, valueName, iter.value(), i);
+                    isValidated = false;
+                }
+                overwriteValueTransformList.push_back(QList<PatternValueSubExpression>());
+                if(Q_UNLIKELY(!ptr->context.parseValueTransformString(
+                                  /* transform        */ record.valueExpr,
+                                  /* result           */ overwriteValueTransformList.back(),
+                                  /* referencedValues */ referencedValues,
+                                  /* isLocalOnly      */ true,
+                                  /* diagnostic       */ diagnostic))){
+                    isValidated = false;
+                }
+            }
+
+            // check if all ParserNode parameters are either overwritten or defined from pattern
+            // give a warning if a parameter is not set
+            destPattern.valueTransform.reserve(dest.paramName.size());
+            for(int i = 0, n = dest.paramName.size(); i < n; ++i){
+                const QString& paramName = dest.paramName.at(i);
+                auto iter_overwrite = overwriteValueNameToIndex.find(paramName);
+                if(iter_overwrite != overwriteValueNameToIndex.end()){
+                    destPattern.valueTransform.push_back(overwriteValueTransformList.at(iter_overwrite.value()));
+                    overwriteValueNameToIndex.erase(iter_overwrite);
+                }else{
+                    auto iter_def = valueNameToIndex.find(paramName);
+                    if(Q_LIKELY(iter_def != valueNameToIndex.end())){
+                        // append an empty transform
+                        destPattern.valueTransform.push_back(QList<PatternValueSubExpression>());
+                        referencedValues.insert(paramName);
+                    }else{
+                        diagnostic(Diag::Warn_Parser_MissingInitializer, paramName);
+                        // initialize the parameter to an empty string
+                        QList<PatternValueSubExpression> dummyExpr;
+                        PatternValueSubExpression dummy;
+                        dummy.ty = PatternValueSubExpression::OpType::Literal;
+                        dummy.data.clear();
+                        dummyExpr.push_back(dummy);
+                        destPattern.valueTransform.push_back(dummyExpr);
+                    }
+                }
+            }
+            Q_ASSERT(destPattern.valueTransform.size() == dest.paramName.size());
+
+            // if any defined overwrites or values are not referenced, issue a warning
+            for(auto iter = valueNameToIndex.begin(), iterEnd = valueNameToIndex.end(); iter != iterEnd; ++iter){
+                if(Q_UNLIKELY(!referencedValues.contains(iter.key()))){
+                    diagnostic(Diag::Warn_Parser_Unused_PatternValue, iter.key(), iter.value());
+                }
+            }
+
+            // because we remove used overwrites when they are referenced, overwriteValueNameToIndex should only contain unused ones
+            if(Q_UNLIKELY(!overwriteValueNameToIndex.isEmpty())){
+                for(auto iter = overwriteValueNameToIndex.begin(), iterEnd = overwriteValueNameToIndex.end(); iter != iterEnd; ++iter){
+                    diagnostic(Diag::Warn_Parser_Unused_Overwrite, iter.key(), iter.value());
+                }
+            }
+        } // Pattern
+
+        // childNodeNameList from src / allowedChildNodeIndexList from dest is processed in second pass
+
+        // earlyExitPatterns
+        dest.earlyExitPatterns.reserve(src.earlyExitPatterns.size());
+        for(int i = 0, n = src.earlyExitPatterns.size(); i < n; ++i){
+            DiagnosticPathNode pathNode(diagnostic, tr("EarlyExitPattern %1").arg(i));
+            dest.earlyExitPatterns.push_back(Parser::Pattern());
+            Parser::Pattern& p = dest.earlyExitPatterns.back();
+            QHash<QString,int> dummy;
+            if(Q_UNLIKELY(!ptr->context.parsePatternString(src.earlyExitPatterns.at(i), p.elements, dummy, diagnostic))){
+                isValidated = false;
+                continue;
+            }
+        }
+
+        // combineToIRNodeTypeName
+        // if it is empty:
+        //      set the dest combineToIRNodeTypeName to IRNode name if there is an IRNode with the same name
+        //      otherwise leave it empty
+        // if it is not empty:
+        //      verify if the IRNode name exists
+        if(!src.combineToNodeTypeName.isEmpty()){
+            int irNodeIndex = ir.getNodeTypeIndex(src.combineToNodeTypeName);
+            dest.combineToIRNodeIndex = irNodeIndex;
+            if(Q_UNLIKELY(irNodeIndex == -1)){
+                diagnostic(Diag::Error_Parser_BadReference_IRNodeName, src.combineToNodeTypeName);
+                isValidated = false;
+            }
+        }else{
+            dest.combineToIRNodeIndex = ir.getNodeTypeIndex(src.name);
+        }
+
+        // combinedNodeParams
+        if(dest.combineToIRNodeIndex != -1){
+            const IRNodeType& irNodeTy = ir.getNodeType(dest.combineToIRNodeIndex);
+            int numParams = irNodeTy.getNumParameter();
+            DiagnosticPathNode pathNode(diagnostic, tr("Conversion To IR Node"));
+            pathNode.setDetailedName(irNodeTy.getName());
+            if(src.combinedNodeParams.isEmpty()){
+                // bind all parameters by name; ParserNode should contain parameter that IRNode expects
+                dest.combineValueTransform.clear();
+                for(int i = 0; i < numParams; ++i){
+                    const QString& paramName = irNodeTy.getParameterName(i);
+                    if(Q_UNLIKELY(!dest.paramName.contains(paramName))){
+                        diagnostic(Diag::Error_Parser_BadConversionToIR_IRParamNotInitialized, paramName);
+                        isValidated = false;
+                    }
+                }
+            }else{
+                // there are some overwrite entries
+                dest.combineValueTransform.reserve(numParams);
+                for(int i = 0; i < numParams; ++i){
+                    dest.combineValueTransform.push_back(QList<QList<PatternValueSubExpression>>());
+                }
+                Q_ASSERT(dest.combineValueTransform.size() == numParams);
+                for(auto iter = src.combinedNodeParams.begin(), iterEnd = src.combinedNodeParams.end();
+                    iter != iterEnd; ++iter){
+                    int paramIndex = irNodeTy.getParameterIndex(iter.key());
+                    if(Q_UNLIKELY(paramIndex == -1)){
+                        diagnostic(Diag::Error_Parser_BadConversionToIR_IRParamNotExist, iter.key());
+                        isValidated = false;
+                    }else{
+                        // TODO
+                        const QStringList& exprList = iter.value();
+                        auto& destList = dest.combineValueTransform[paramIndex];
+                        destList.reserve(exprList.size());
+                        for(int i = 0, n = exprList.size(); i < n; ++i){
+                            QSet<QString> referencedVals;
+                            destList.push_back(QList<PatternValueSubExpression>());
+                            if(Q_UNLIKELY(!ptr->context.parseValueTransformString(
+                                              exprList.at(i),
+                                              destList.back(),
+                                              referencedVals,
+                                              false,
+                                              diagnostic))){
+                                isValidated = false;
+                            }
+                            // we don't check reference made here yet
+                        }
+                    }
+                } // finished handling all records in src.combinedNodeParams
+            }
+            // finished handling parameter conversion to IR node
+        }
+        Q_ASSERT(ptr->nodes.size() == i);
+        ptr->nodes.push_back(dest);
+    } // ParserNode
+
+    // check if root node is good
+    // although checking whether child name reference is good is done below, avoid doing here
+    // would cause the entire tree to be unreachable and therefore will produce too many unhelpful warnings.
+    int rootParserNodeIndex = nodeNameToIndex.value(policy.rootParserNodeName, -1);
+    if(Q_UNLIKELY(rootParserNodeIndex == -1)){
+        diagnostic(Diag::Error_Parser_BadRoot_BadReferenceByParserNodeName, policy.rootParserNodeName);
+        isValidated = false;
+    }else if(Q_UNLIKELY(ptr->nodes.at(rootParserNodeIndex).combineToIRNodeIndex == -1)){
+        diagnostic(Diag::Error_Parser_BadRoot_NotConvertingToIR, policy.rootParserNodeName);
+        isValidated = false;
+    }
+
+    if(!isValidated)
+        return nullptr;
+
+    // second pass: reorder parser nodes in BFS order
+    Q_ASSERT(ptr->nodes.size() == policy.nodes.size());
+    decltype(ptr->nodes) tmpNodes;
+    tmpNodes.swap(ptr->nodes);
+    ptr->nodes.reserve(tmpNodes.size());
+    QQueue<int> rawNodeIndexQueue;
+    std::size_t numNodes = static_cast<std::size_t>(ptr->nodes.size());
+    // for each raw node index. what's the final index
+    std::vector<int> rawNodeIndexToNewIndex(numNodes, -1);
+    // used to check if there is any reference to a raw node index
+    // also used to check if there is any duplicated reference from the same node
+    // the value is the largest new node index making the reference
+    // -2 for unreferenced node, -1 for root node, >=0 for nodes referenced by another node with that index
+    std::vector<int> nodeReferenceChecker(numNodes, -2);
+    rawNodeIndexQueue.enqueue(rootParserNodeIndex);
+    nodeReferenceChecker.at(static_cast<std::size_t>(rootParserNodeIndex)) = -1;// root node is referenced
+    while(!rawNodeIndexQueue.empty()){
+        int rawIndex = rawNodeIndexQueue.dequeue();
+        const Node& src = tmpNodes.at(rawIndex);
+        int cookedIndex = ptr->nodes.size();
+        rawNodeIndexToNewIndex.at(static_cast<std::size_t>(rawIndex))= cookedIndex;
+        ptr->nodes.push_back(src);
+        const ParserNode& srcNode = policy.nodes.at(rawIndex);
+        Node& dest = ptr->nodes.back();
+        // we will populate child node index here
+        // use the raw index first, then use another pass to correct them afterwards
+        dest.allowedChildNodeIndexList.reserve(srcNode.childNodeNameList.size());
+        for(int i = 0, n = srcNode.childNodeNameList.size(); i < n; ++i){
+            const QString& childName = srcNode.childNodeNameList.at(i);
+            int childRawIndex = nodeNameToIndex.value(childName, -1);
+            if(Q_UNLIKELY(childRawIndex == -1)){
+                diagnostic(Diag::Error_Parser_BadTree_BadChildNodeReference, src.nodeName, childName);
+                isValidated = false;
+            }else{
+                std::size_t castedChildRawIndex = static_cast<std::size_t>(childRawIndex);
+                int oldval = nodeReferenceChecker.at(castedChildRawIndex);
+                nodeReferenceChecker.at(castedChildRawIndex) = rawIndex;
+
+                if(Q_UNLIKELY(oldval == rawIndex)){
+                    // duplicated reference
+                    diagnostic(Diag::Warn_Parser_DuplicatedReference_ChildParserNode, src.nodeName, childName);
+                }else{
+                    dest.allowedChildNodeIndexList.push_back(childRawIndex);
+                }
+
+                // add to queue if this node is not referenced before
+                if(oldval == -2){
+                    rawNodeIndexQueue.enqueue(childRawIndex);
+                }
+            }
+        }
+    }
+
+    // warning on all unreferenced nodes
+    if(Q_UNLIKELY(ptr->nodes.size() != policy.nodes.size())){
+        int missingCount = 0;
+        for(std::size_t i = 0; i < numNodes; ++i){
+            // consistency check
+            Q_ASSERT((nodeReferenceChecker.at(i) == -2) == (rawNodeIndexToNewIndex.at(i) == -1));
+            if(nodeReferenceChecker.at(i) == -2){
+                missingCount += 1;
+                diagnostic(Diag::Warn_Parser_UnreachableNode, policy.nodes.at(static_cast<int>(i)).name);
+            }
+        }
+        Q_ASSERT(missingCount + ptr->nodes.size() == policy.nodes.size());
+    }
+
+    // update all indices to the new one
+    for(auto& node : ptr->nodes){
+        for(int& childIndex : node.allowedChildNodeIndexList){
+            childIndex = rawNodeIndexToNewIndex.at(static_cast<std::size_t>(childIndex));
+            Q_ASSERT(childIndex >= 0);
+        }
+    }
+
+    // done!
+    return ptr.release();
 }
 
-QList<Parser::ParserNodeData> Parser::patternMatch(const QString& text, DiagnosticEmitterBase& diagnostic) const
+int Parser::computePatternScore(const QList<SubPattern>& pattern, const QList<int>& matchPairScore)
+{
+    // score computation rule:
+    // if we have a literal: score is incremented by 2 * (length of literal)
+    // if we have a match pair, then the score is incremented by the score from matchPairScore
+    // (which should be (minimum length of match pair start + minimum length of match pair end))
+    // if we have an Auto, the score is incremented by 1
+    // if we have a regex, the score is incremented by length of regex string
+    int score = 0;
+    for(const SubPattern& p : pattern){
+        switch(p.ty){
+        case SubPatternType::Literal:{
+            score += p.literalData.str.length() * 2;
+        }break;
+        case SubPatternType::MatchPair:{
+            score += matchPairScore.at(p.matchPairData.matchPairIndex);
+        }break;
+        case SubPatternType::Regex:{
+            score += p.regexData.regex.pattern().length();
+        }break;
+        case SubPatternType::Auto:{
+            score += 1;
+        }break;
+        }
+    }
+    return score;
+}
+
+bool Parser::ParseContext::parsePatternString(
+        const QString& pattern,
+        QList<SubPattern> &result,
+        QHash<QString, int> &valueNameToIndex,
+        DiagnosticEmitterBase& diagnostic)
+{
+    QStringRef view(&pattern);
+
+    // keep a copy of first patterns we put
+    int startIndex = result.size();
+
+    // we will do some fixup if this is true
+    QStringRef lastAutoSubPatternStr;
+    bool isLastPatternAutoNeedFixup = false;
+    while(!view.isEmpty()){
+
+        // ignore strings from ignoreList first
+        int ignoredStrLength = removeLeadingIgnoredString(view);
+        if(ignoredStrLength != 0){
+            if(isLastPatternAutoNeedFixup){
+                //an auto pattern followed by ignore string
+                Q_ASSERT(!result.isEmpty());
+                auto& p = result.back();
+                Q_ASSERT(p.ty == SubPatternType::Auto);
+                p.autoData.isTerminateByIgnoredString = true;
+                if(Q_UNLIKELY(p.autoData.nextSubPatternIncludeLength != 0)){
+                    StringDiagnosticRecord d;
+                    d.str = pattern;
+                    // info interval is the ignored string
+                    d.infoStart = view.position() - ignoredStrLength;
+                    d.infoEnd = view.position();
+                    // error interval is the auto mattern
+                    d.errorStart = lastAutoSubPatternStr.position();
+                    d.errorEnd = lastAutoSubPatternStr.position() + lastAutoSubPatternStr.length();
+                    diagnostic(Diag::Error_Parser_BadPattern_Expr_InvalidNextPatternForInclusion, d);
+                    return false;
+                }
+            }
+        }
+        isLastPatternAutoNeedFixup = false;
+
+        if(view.isEmpty())
+            break;
+
+        if(view.startsWith(exprStartMark)){
+            // assume exprStartMark = "<" and exprEndMark = ">"
+            // regex: something like <[regex]"**(...)**">
+            // literal: something like <"**(...)**">
+            // UpToTerminator: anything left
+            QStringRef bodyStart = view.mid(exprStartMark.length());
+            QStringRef engineText;
+            QStringRef body;
+            bool isEngineSpecified = false;
+            bool isReferenceExpr = false;
+            if(bodyStart.startsWith('[')){
+                int endIndex = bodyStart.indexOf(']',1);
+                if(Q_UNLIKELY(endIndex == -1)){
+                    StringDiagnosticRecord d;
+                    d.str = pattern;
+                    // info interval is everything after exprStartMark
+                    d.infoStart = view.position();
+                    d.infoEnd = pattern.length();
+                    // error interval is '['
+                    d.errorStart = bodyStart.position();
+                    d.errorEnd = bodyStart.position()+1;
+                    diagnostic(Diag::Error_Parser_BadPattern_Expr_MissingEngineNameEndMark, d);
+                    return false;
+                }
+                engineText = bodyStart.mid(1,endIndex-1);
+                bodyStart = bodyStart.mid(endIndex+1);
+                isEngineSpecified = true;
+            }
+            if(Q_UNLIKELY(bodyStart.isEmpty())){
+                StringDiagnosticRecord d;
+                d.str = pattern;
+                // info interval is everything after exprStartMark
+                d.infoStart = view.position();
+                d.infoEnd = pattern.length();
+                // error interval is exprStartMark
+                d.errorStart = view.position();
+                d.errorEnd = view.position()+1;
+                diagnostic(Diag::Error_Parser_BadPattern_Expr_ExpectingExpressionContent, d);
+                return false;
+            }
+            bool isRawStringLiteral = bodyStart.startsWith('(');
+            bool isDirectQuotedStringLiteral = bodyStart.startsWith('"');
+            if(isRawStringLiteral || isDirectQuotedStringLiteral){
+                int tailStartIndex = -1;
+                if(isRawStringLiteral){
+                    // raw string literal style
+                    int startQuoteIndex = bodyStart.indexOf('"', 1);
+                    if(Q_UNLIKELY(startQuoteIndex == -1)){
+                        StringDiagnosticRecord d;
+                        d.str = pattern;
+                        // info interval is everything after exprStartMark
+                        d.infoStart = view.position();
+                        d.infoEnd = pattern.length();
+                        // error interval is '('
+                        d.errorStart = bodyStart.position();
+                        d.errorEnd = bodyStart.position()+1;
+                        diagnostic(Diag::Error_Parser_BadPattern_Expr_RawStringMissingQuoteStart, d);
+                        return false;
+                    }
+                    QStringRef delimitor = bodyStart.mid(1, startQuoteIndex-1);
+                    QStringRef quotedContentStart = bodyStart.mid(startQuoteIndex+1);
+                    QString expectedTerminator;
+                    Q_ASSERT(delimitor.length() == startQuoteIndex-1);
+                    expectedTerminator.reserve(startQuoteIndex+1);
+                    expectedTerminator.push_back('"');
+                    expectedTerminator.append(delimitor);
+                    expectedTerminator.push_back(')');
+                    int contentLength = quotedContentStart.indexOf(expectedTerminator);
+                    if(Q_UNLIKELY(contentLength == -1)){
+                        StringDiagnosticRecord d;
+                        d.str = pattern;
+                        // info interval is everything after exprStartMark
+                        d.infoStart = view.position();
+                        d.infoEnd = pattern.length();
+                        // error interval is the delimitor with '(' and '"'
+                        d.errorStart = bodyStart.position();
+                        d.errorEnd = bodyStart.position() + startQuoteIndex + 1;
+                        diagnostic(Diag::Error_Parser_BadPattern_Expr_UnterminatedQuote, d);
+                        return false;
+                    }
+                    body = quotedContentStart.left(contentLength);
+                    tailStartIndex = 2*(startQuoteIndex+1) + contentLength;
+                }else{
+                    // direct quote; use '"' as terminator
+                    int bodyEndIndex = bodyStart.indexOf('"', 1);
+                    if(Q_UNLIKELY(bodyEndIndex == -1)){
+                        StringDiagnosticRecord d;
+                        d.str = pattern;
+                        // info interval is everything after exprStartMark
+                        d.infoStart = view.position();
+                        d.infoEnd = pattern.length();
+                        // error interval is '"'
+                        d.errorStart = bodyStart.position();
+                        d.errorEnd = bodyStart.position()+1;
+                        diagnostic(Diag::Error_Parser_BadPattern_Expr_UnterminatedQuote, d);
+                        return false;
+                    }
+                    body = bodyStart.mid(1, bodyEndIndex-1);
+                    tailStartIndex = bodyEndIndex + 1;
+                }
+                // make sure the string is not empty
+                if(Q_UNLIKELY(body.isEmpty())){
+                    StringDiagnosticRecord d;
+                    d.str = pattern;
+                    // info interval is from the exprStartMark to end of quote
+                    d.infoStart = view.position();
+                    d.infoEnd = bodyStart.position() + tailStartIndex;
+                    // error interval is the quote
+                    d.errorStart = bodyStart.position();
+                    d.errorEnd = bodyStart.position() + tailStartIndex;
+                    diagnostic(Diag::Error_Parser_BadPattern_Expr_EmptyBody, d);
+                    return false;
+                }
+                // make sure there is no garbage before the end mark and after the string
+                QStringRef tail = bodyStart.mid(tailStartIndex);
+                int endMarkIndex = tail.indexOf(exprEndMark);
+                if(Q_UNLIKELY(endMarkIndex == -1)){
+                    // no end marker
+                    StringDiagnosticRecord d;
+                    d.str = pattern;
+                    // info interval is everything after exprStartMark
+                    d.infoStart = view.position();
+                    d.infoEnd = pattern.length();
+                    // error interval is everything starting from the tail
+                    d.errorStart = tail.position();
+                    d.errorEnd = pattern.length();
+                    diagnostic(Diag::Error_Parser_BadPattern_Expr_UnterminatedExpr, d);
+                    return false;
+                }else if(Q_UNLIKELY(endMarkIndex != 0)){
+                    StringDiagnosticRecord d;
+                    d.str = pattern;
+                    // info interval is the entire expr
+                    d.infoStart = view.position();
+                    d.infoEnd = tail.position() + endMarkIndex + exprEndMark.length();
+                    // error interval is the garbage at end
+                    d.errorStart = tail.position();
+                    d.errorEnd = tail.position() + endMarkIndex;
+                    diagnostic(Diag::Error_Parser_BadPattern_Expr_GarbageAtEnd, d);
+                    return false;
+                }
+
+                // the tail looks good
+                // start to validate this expression
+                SubPattern expr;
+                int subPatternIndex = result.size();
+                if(isEngineSpecified){
+                    if(engineText == "regex"){
+                        expr.ty = SubPatternType::Regex;
+                        expr.regexData.regex.setPattern(body.toString());
+                        if(Q_UNLIKELY(!expr.regexData.regex.isValid())){
+                            StringDiagnosticRecord d;
+                            d.str = pattern;
+                            // info interval is the regular expression string
+                            d.infoStart = body.position();
+                            d.infoEnd = body.position() + body.length();
+                            // error interval is the character marked by patternErrorOffset
+                            d.errorStart = body.position() + expr.regexData.regex.patternErrorOffset();
+                            d.errorEnd = d.errorStart + 1;
+                            diagnostic(Diag::Error_Parser_BadPattern_Expr_BadRegex, d, expr.regexData.regex.errorString());
+                            return false;
+                        }
+                        // fill in all named captures made by this regex
+                        for(const QString& capture : expr.regexData.regex.namedCaptureGroups()){
+                            if(capture.isEmpty())
+                                continue;
+                            auto iter = valueNameToIndex.find(capture);
+                            if(Q_UNLIKELY(iter != valueNameToIndex.end())){
+                                diagnostic(Diag::Error_Parser_BadPattern_Expr_DuplicatedDefinition, capture, iter.value(), subPatternIndex);
+                                return false;
+                            }
+                            valueNameToIndex.insert(capture, subPatternIndex);
+                        }
+                    }else{
+                        StringDiagnosticRecord d;
+                        d.str = pattern;
+                        // info interval is the entire expr
+                        d.infoStart = view.position();
+                        d.infoEnd = tail.position() + endMarkIndex + exprEndMark.length();
+                        // error interval is the engine specifier
+                        d.errorStart = engineText.position() - 1;
+                        d.errorEnd = engineText.position() + engineText.length() + 1;
+                        diagnostic(Diag::Error_Parser_BadPattern_Expr_UnrecognizedEngine, d);
+                        return false;
+                    }
+                }else{
+                    // literal string
+                    expr.ty = SubPatternType::Literal;
+                    expr.literalData.str = body.toString();
+                }
+                // we successfully consumed the expression
+                view = tail.mid(exprEndMark.length());
+                result.push_back(expr);
+            }else{
+                // no string literal find; probably a reference expression
+                if(isEngineSpecified){
+                    // if there is an engine specifier, we must use a string literal after it
+                    StringDiagnosticRecord d;
+                    d.str = pattern;
+                    // info interval is the engine text with []
+                    d.infoStart = engineText.position()-1;
+                    d.infoEnd = engineText.position() + engineText.length() + 1;
+                    // error interval is the character after ']'
+                    // we know there is a character there, since we check bodyStart.isEmpty() first
+                    d.errorStart = d.infoEnd;
+                    d.errorEnd = d.infoEnd + 1;
+                    diagnostic(Diag::Error_Parser_BadPattern_Expr_NoRawLiteralAfterEngineSpecifier, d);
+                    return false;
+                }
+                isReferenceExpr = true;
+                // direct search on exprEndMark
+                int endMarkIndex = bodyStart.indexOf(exprEndMark);
+                if(Q_UNLIKELY(endMarkIndex == -1)){
+                    StringDiagnosticRecord d;
+                    d.str = pattern;
+                    // info interval is everything after exprStartMark
+                    d.infoStart = view.position();
+                    d.infoEnd = pattern.length();
+                    // error interval is the start mark
+                    d.errorStart = view.position();
+                    d.errorEnd = bodyStart.position();
+                    diagnostic(Diag::Error_Parser_BadPattern_Expr_UnterminatedExpr, d);
+                    return false;
+                }
+                QStringRef exprFullString = view.left(exprStartMark.length() + endMarkIndex + exprEndMark.length()); // just for error messages
+                QStringRef referencedName = bodyStart.left(endMarkIndex);
+                bool isIncludeSuccessiveTerminator = referencedName.endsWith('*');
+                if(isIncludeSuccessiveTerminator){
+                    referencedName.chop(1);
+                }
+                bool isIncludeTerminator = referencedName.endsWith('+');
+                if(isIncludeTerminator){
+                    referencedName.chop(1);
+                }
+                // we require +* at the end for including all successive terminator
+                if(Q_UNLIKELY(isIncludeSuccessiveTerminator && !isIncludeTerminator)){
+                    StringDiagnosticRecord d;
+                    d.str = pattern;
+                    // info interval is the entire expression
+                    d.infoStart = exprFullString.position();
+                    d.infoEnd = exprFullString.position() + exprFullString.length();
+                    // error interval is the terminator Inclusion specifier
+                    d.errorStart = referencedName.position() + referencedName.length();
+                    d.errorEnd = d.errorStart + (isIncludeSuccessiveTerminator? 1:0) + (isIncludeTerminator? 1:0); // basically errorStart + 1
+                    diagnostic(Diag::Error_Parser_BadPattern_Expr_BadTerminatorInclusionSpecifier, d);
+                    return false;
+                }
+
+                // check if the name is good
+                QString finalName = referencedName.toString();
+                // the name can be empty, if the match result is not used
+                if(!finalName.isEmpty()){
+                    if(Q_UNLIKELY(!IRNodeType::validateName(diagnostic, finalName))){
+                        StringDiagnosticRecord d;
+                        d.str = pattern;
+                        // info interval is the entire expression
+                        d.infoStart = exprFullString.position();
+                        d.infoEnd = exprFullString.position() + exprFullString.length();
+                        // error interval is the name reference
+                        d.errorStart = referencedName.position();
+                        d.errorEnd = referencedName.position() + referencedName.length();
+                        diagnostic(Diag::Error_Parser_BadPattern_Expr_BadNameForReference, d);
+                        return false;
+                    }
+                }
+                SubPattern expr;
+                expr.ty = SubPatternType::Auto;
+                expr.autoData.valueName = finalName;
+                expr.autoData.isTerminateByIgnoredString = false;// we will correct this in second pass
+                expr.autoData.nextSubPatternIncludeLength = (isIncludeTerminator? (isIncludeSuccessiveTerminator? -1: 1): 0);
+                // if the last sub pattern is also an auto sub pattern, make it terminate by ignored string
+                if(!result.isEmpty()){
+                    auto& p = result.back();
+                    if(p.ty == SubPatternType::Auto){
+                        p.autoData.isTerminateByIgnoredString = true;
+                        if(Q_UNLIKELY(p.autoData.nextSubPatternIncludeLength != 0)){
+                            StringDiagnosticRecord d;
+                            d.str = pattern;
+                            // info interval is the current sub pattern
+                            d.infoStart = exprFullString.position();
+                            d.infoEnd = exprFullString.position() + exprFullString.length();
+                            // error interval is the auto mattern
+                            d.errorStart = lastAutoSubPatternStr.position();
+                            d.errorEnd = lastAutoSubPatternStr.position() + lastAutoSubPatternStr.length();
+                            diagnostic(Diag::Error_Parser_BadPattern_Expr_InvalidNextPatternForInclusion, d);
+                            return false;
+                        }
+                    }
+                }
+                // we successfully consumed the expression
+                isLastPatternAutoNeedFixup = true;
+                lastAutoSubPatternStr = exprFullString;
+                view = view.mid(exprStartMark.length() + endMarkIndex + exprEndMark.length());
+                result.push_back(expr);
+            }
+            // done processing cases with exprStartMark
+        }else{
+            // start of a literal, or a match pair marker
+            // TODO
+        }
+    }
+
+    // no empty pattern accepted
+    if(result.size() == startIndex){
+        diagnostic(Diag::Error_Parser_BadPattern_EmptyPattern);
+        return false;
+    }
+
+    // correct the last Auto type sub patterns
+    {
+        auto& p = result.back();
+        if(p.ty == SubPatternType::Auto){
+            // make sure we do not set inclusion flag
+            if(Q_UNLIKELY(p.autoData.nextSubPatternIncludeLength != 0)){
+                StringDiagnosticRecord d;
+                d.str = pattern;
+                // info interval is everything after the auto sub pattern
+                d.infoStart = lastAutoSubPatternStr.position() + lastAutoSubPatternStr.length();
+                d.infoEnd = pattern.length();
+                // error interval is the auto mattern
+                d.errorStart = lastAutoSubPatternStr.position();
+                d.errorEnd = lastAutoSubPatternStr.position() + lastAutoSubPatternStr.length();
+                diagnostic(Diag::Error_Parser_BadPattern_Expr_InvalidNextPatternForInclusion, d);
+                return false;
+            }
+            p.autoData.isTerminateByIgnoredString = true;
+        }
+    }
+
+    return true;
+}
+
+bool Parser::ParseContext::parseValueTransformString(const QString& transform,
+        QList<PatternValueSubExpression> &result,
+        QSet<QString> &referencedValues,
+        bool isLocalOnly,
+        DiagnosticEmitterBase &diagnostic)
+{
+    // TODO
+    return false;
+}
+
+QList<Parser::ParserNodeData> Parser::patternMatch(QVector<QStringRef> &text, DiagnosticEmitterBase& diagnostic) const
 {
     /*
      * start with root node
@@ -54,12 +905,7 @@ QList<Parser::ParserNodeData> Parser::patternMatch(const QString& text, Diagnost
     int currentParentIndex = -1;
 
     QVector<QStringRef> textUnits;
-
-    if(context.isLineMode){
-        textUnits = text.splitRef(QChar('\n'), QString::SkipEmptyParts, Qt::CaseSensitive);
-    }else{
-        textUnits.push_back(QStringRef(&text, 0, text.length()));
-    }
+    textUnits.swap(text);
 
     // skip all leading ignored string first, then skip lines that now becomes empty
     // also reverse the order of items in the vector so that we can always read from the back
@@ -575,7 +1421,7 @@ const QList<int>& Parser::IRBuildContext::getNodeChildList(int parentIndex, int 
     }
 }
 
-IRRootInstance* Parser::parse(const QString& text, const IRRootType& ir, DiagnosticEmitterBase& diagnostic) const
+IRRootInstance* Parser::parse(QVector<QStringRef> &text, const IRRootType& ir, DiagnosticEmitterBase& diagnostic) const
 {
     IRBuildContext ctx;
     ctx.parserNodes = patternMatch(text, diagnostic);
@@ -587,10 +1433,6 @@ IRRootInstance* Parser::parse(const QString& text, const IRRootType& ir, Diagnos
     // root node to root node
     const ParserNodeData& rootData = ctx.parserNodes.front();
     const Node& rootNodeTy = nodes.at(rootData.nodeTypeIndex);
-    if(rootNodeTy.combineToIRNodeTypeName.isEmpty()){
-        diagnostic(Diag::Error_Parser_IRBuild_BadRoot);
-        return nullptr;
-    }
 
     auto helper_buildIRNode = [&](int parserNodeIndex, int irNodeTypeIndex, int parentIRNodeIndex)->int{
         const IRNodeType& irNodeTy = ptr->getType().getNodeType(irNodeTypeIndex);
@@ -666,8 +1508,7 @@ IRRootInstance* Parser::parse(const QString& text, const IRRootType& ir, Diagnos
 
         return irNodeIndex;
     };
-    int rootNodeIRTyIndex = ir.getNodeTypeIndex(rootNodeTy.combineToIRNodeTypeName);
-    int rootNodeIRIndex = helper_buildIRNode(0, rootNodeIRTyIndex, -1);
+    int rootNodeIRIndex = helper_buildIRNode(0, rootNodeTy.combineToIRNodeIndex, -1);
     Q_ASSERT(rootNodeIRIndex == 0);
 
     struct NodeIndexRecord{
@@ -682,10 +1523,10 @@ IRRootInstance* Parser::parse(const QString& text, const IRRootType& ir, Diagnos
         const Node& nodeTy = nodes.at(nodeData.nodeTypeIndex);
 
         // ignore parser-only nodes
-        if(nodeTy.combineToIRNodeTypeName.isEmpty())
+        int irNodeTypeIndex = nodeTy.combineToIRNodeIndex;
+        if(irNodeTypeIndex == -1)
             continue;
 
-        int irNodeTypeIndex = ir.getNodeTypeIndex(nodeTy.combineToIRNodeTypeName);
         Q_ASSERT(irNodeTypeIndex >= 0);
 
         // find the correct parent IR node
@@ -794,12 +1635,16 @@ std::tuple<int, int, int> Parser::ParseContext::getMatchingStartAdvanceDistance(
     int matchPairIndex = -1;
     int matchPairStartLength = -1;
 
-    for(const auto& mark : matchPairStart){
-        int index = text.indexOf(mark.str);
-        if(pos == -1 || index < pos || (index == pos && matchPairStartLength < mark.str.length())){
-            pos = index;
-            matchPairIndex = mark.matchPairIndex;
-            matchPairStartLength = mark.str.length();
+    for(int i = 0, n = matchPairStarts.size(); i < n; ++i){
+        for(const QString& str : matchPairStarts.at(i)){
+            int index = text.indexOf(str);
+            if(index != -1){
+                if(pos == -1 || index < pos || (index == pos && matchPairStartLength < str.length())){
+                    pos = index;
+                    matchPairIndex = i;
+                    matchPairStartLength = str.length();
+                }
+            }
         }
     }
 
@@ -846,215 +1691,187 @@ int Parser::match(QStringRef input, QHash<QString,QString>& values, const ParseC
     if(pattern.empty())
         return 0;
 
-    struct Frame{
-        QStringRef text;        //!< the text this frame deals with
-        int lastPatternIndex;   //!< the pattern index current frame should not touch
-        int curPatternIndex;    //!< current subpattern
-        int advanceCount;       //!< how many characters is already consumed from the start of text
+    // helper function
+    auto regexExtractMatchValues = [&](const QStringList& namedCaptureGroups, const QRegularExpressionMatch& matchResult)->void{
+        // the first capture should have no name
+        Q_ASSERT(namedCaptureGroups.front().isEmpty());
+        for(int i = 1; i < namedCaptureGroups.size(); ++i){
+            const QString& name = namedCaptureGroups.at(i);
+            if(!name.isEmpty()){
+                values.insert(name, matchResult.captured(i));
+            }
+        }
     };
 
-    QStack<Frame> stack;
-    stack.push({input, pattern.size(), 0, 0});
-
-    // we always start from sub pattern zero
-
-    while(true){
-        // use a dedicated scope for sub pattern handling
-        {
-            Q_ASSERT(stack.size() > 0);
-            Frame& f = stack.top();
-            QStringRef text = f.text.mid(f.advanceCount);
-            const SubPattern& p = pattern.at(f.curPatternIndex);
-            switch(p.ty){
-            case SubPatternType::Literal:{
-                if(!text.startsWith(p.data)){
-                    // match fail
-                    return 0;
-                }
-
-                f.advanceCount += p.data.length();
-                f.curPatternIndex += 1;
-            }break;
-            case SubPatternType::Regex:{
-                auto result = p.regex.match(text, 0, QRegularExpression::NormalMatch, QRegularExpression::AnchoredMatchOption);
-                if(!result.hasMatch()){
-                    // match fail
-                    return 0;
-                }
-
-                QStringList regexVarNames = p.regex.namedCaptureGroups();
-
-                // the first capture should have no name
-                Q_ASSERT(regexVarNames.front().isEmpty());
-
-                for(int i = 1; i < regexVarNames.size(); ++i){
-                    const QString& name = regexVarNames.at(i);
-                    if(!name.isEmpty()){
-                        values.insert(name, result.captured(i));
-                    }
-                }
-
-                f.advanceCount += result.capturedRef(0).length();
-                f.curPatternIndex += 1;
-            }break;
-            case SubPatternType::UpToTerminator:{
-                int curAdvance = 0;
-                while(true){
-                    QStringRef advancedText = text.mid(curAdvance);
-                    int index = -1;
-                    if(!p.data.isEmpty()){
-                        index = advancedText.indexOf(p.data);
-                    }
-                    if(index == -1){
-                        // no terminator found
-                        // however, if we are in match pair and this is the last subpattern, this is also a valid result
-                        if(f.curPatternIndex + 1 == f.lastPatternIndex){
-                            if(!p.valueName.isEmpty()){
-                                // in this case we want to remove trailing substring in ignoreList
-                                QStringRef curText = advancedText;
-                                ctx.removeTrailingIgnoredString(curText);
-                                values.insert(p.valueName, curText.toString());
-                            }
-                            // consumed everything
-                            curAdvance += advancedText.length();
-                            break;
-                        }else{
-                            // unexpected "terminator not found"
-                            return 0;
-                        }
-                    }else{
-                        // terminator found
-                        // look for any match pair start mark before terminator
-                        // if there is any, starting from the first such marker, find the matching end marker, then resume search from there
-                        // we DO consume the terminator anyway, no matter whether it is included in variable or not
-                        int startPos = -1;
-                        int pairIndex = -1;
-                        int startLength = -1;
-                        int searchLength = index - 1 + ctx.longestMatchPairStartStringLength;
-                        std::tie(startPos, pairIndex, startLength) = ctx.getMatchingStartAdvanceDistance(advancedText.left(searchLength));
-                        if(startPos == -1 || index < startPos){
-                            // no match pair start mark found, or they are not significant
-                            // done
-                            int terminatorInValueCount = 0;
-                            int terminatorConsumeCount = 1;
-                            switch(p.incMode){
-                            case TerminatorInclusionMode::Avoid: break;
-                            case TerminatorInclusionMode::IncludeOne:{
-                                terminatorInValueCount = 1;
-                            }break;
-                            case TerminatorInclusionMode::IncludeSuccessive:{
-                                while(advancedText.mid(index + terminatorConsumeCount * p.data.length()).startsWith(p.data.length())){
-                                    terminatorConsumeCount += 1;
-                                }
-                                terminatorInValueCount = terminatorConsumeCount;
-                            }break;
-                            }
-                            if(!p.valueName.isEmpty()){
-                                values.insert(p.valueName, advancedText.mid(0, index + terminatorInValueCount * p.data.length()).toString());
-                            }
-                            curAdvance += index + terminatorConsumeCount * p.data.length();
-                            break;
-                        }else{
-                            // match pair found
-                            int pos = ctx.getMatchingEndAdvanceDistance(advancedText.mid(startPos + startLength), pairIndex).first;
-                            if(pos == -1){
-                                // broken expectation on match pair end
-                                return 0;
-                            }
-                            curAdvance += startPos + startLength + pos;
-                            continue;
-                        }
-                    } // end of else branch where terminator is found
-                } // end of advance loop
-                f.advanceCount += curAdvance;
-                f.curPatternIndex += 1;
-            }break;
-            case SubPatternType::MatchPair:{
-                // 1. find the match pair end
-                // 2. adjust current frame so that now it jumps to next pattern outside match pair
-                // 3. if there is any sub pattern inside match pair, push a frame so that they work on the text enclosed by the match pair
-                //    otherwise, make sure everything enclosed by the match pair is in ignoreList, return fail if not the case
-                // Note that the code here is responsible for skipping stuff in ignoreList in subtree enclosed by match pair
-                int endAdvance = -1;
-                int endMarkLen = -1;
-                std::tie(endAdvance, endMarkLen) = ctx.getMatchingEndAdvanceDistance(text, p.matchPairIndex);
-                if(endAdvance == -1){
-                    // broken expectation on match pair end
-                    return 0;
-                }
-                f.advanceCount += endAdvance;
-                int nextPattern = f.curPatternIndex + 1;
-                f.curPatternIndex = p.matchPairEndPatternIndex;
-
-                QStringRef enclosedText = text.left(endAdvance - endMarkLen);
-
-                ctx.removeLeadingIgnoredString(enclosedText);
-                ctx.removeTrailingIgnoredString(enclosedText);
-
-                if(nextPattern == p.matchPairEndPatternIndex){
-                    // there is no sub patterns within this match pair
-                    // if the enclosed text is not empty, report fail
-                    if(!enclosedText.isEmpty()){
-                        return 0;
-                    }
-                }else{
-                    // there is sub patterns within this match pair
-                    // report fail if there is no text left
-                    if(enclosedText.isEmpty()){
-                        return 0;
-                    }
-                    // prepare a new frame
-                    Frame newFrame;
-                    newFrame.text = enclosedText;
-                    newFrame.lastPatternIndex = p.matchPairEndPatternIndex;
-                    newFrame.curPatternIndex = nextPattern;
-                    newFrame.advanceCount = 0;
-                    stack.push(newFrame);
-                }
-            }break;
-            }
+    // helper function
+    // return number of characters consumed if successful; used inside Auto type subpattern
+    auto autoSubPattern_checkNextPattern = [&regexExtractMatchValues](const SubPattern& p, QStringRef text, const ParseContext& ctx)->int{
+        switch(p.ty){
+        case SubPatternType::Auto:{
+            Q_UNREACHABLE();
+        }break;
+        case SubPatternType::Literal:{
+            if(text.startsWith(p.literalData.str))
+                return p.literalData.str.length();
+            return 0;
         }
-        // sub pattern handling done
+        case SubPatternType::Regex:{
+            auto regexResult = p.regexData.regex.match(text, 0, QRegularExpression::NormalMatch, QRegularExpression::AnchoredMatchOption);
+            if(!regexResult.hasMatch()){
+                // no matches
+                return 0;
+            }
+            regexExtractMatchValues(p.regexData.regex.namedCaptureGroups(), regexResult);
+            return regexResult.capturedEnd(0);
+        }
+        case SubPatternType::MatchPair:{
+            const auto& data = p.matchPairData;
+            int forwardDist = 0;
+            const QStringList& matchPairMarkerList = (data.isStart? ctx.matchPairStarts : ctx.matchPairEnds).at(data.matchPairIndex);
+            for(const QString& mark : matchPairMarkerList){
+                if(text.startsWith(mark)){
+                    if(mark.length() > forwardDist){
+                        forwardDist = mark.length();
+                    }
+                }
+            }
+            return forwardDist;
+        }
+        }
+        Q_UNREACHABLE();
+    };
 
-        // check if it is the time to pop frame
-        // if yes: if this is the last frame: return
-        // otherwise, make sure everything left is in ignore list; otherwise it is a match failure
-        // we may need to pop frames more than once
-        while(true){
-            Q_ASSERT(stack.size() > 0);
-            Frame& f = stack.top();
-            QStringRef text = f.text.mid(f.advanceCount);
+    QStringRef text = input;
+    for(int patternIndex = 0, n = pattern.size(); patternIndex < n; ++patternIndex){
+        ctx.removeLeadingIgnoredString(text);
+        if(text.isEmpty())
+            return 0;
 
-            // step 1: remove ignored strings at beginning
-            int trimLen = ctx.removeLeadingIgnoredString(text);
-            f.advanceCount += trimLen;
+        const SubPattern& p = pattern.at(patternIndex);
+        switch(p.ty){
+        case SubPatternType::Literal:{
+            if(!text.startsWith(p.literalData.str)){
+                // match fail
+                return 0;
+            }
+            text = text.mid(p.literalData.str.length());
+        }break;
+        case SubPatternType::Regex:{
+            auto result = p.regexData.regex.match(text, 0, QRegularExpression::NormalMatch, QRegularExpression::AnchoredMatchOption);
+            if(!result.hasMatch()){
+                // match fail
+                return 0;
+            }
+            regexExtractMatchValues(p.regexData.regex.namedCaptureGroups(), result);
+            text = text.mid(result.capturedRef(0).length());
+        }break;
+        case SubPatternType::MatchPair:{
+            const auto& data = p.matchPairData;
+            int forwardDist = 0;
+            const QStringList& matchPairMarkerList = (data.isStart? ctx.matchPairStarts : ctx.matchPairEnds).at(data.matchPairIndex);
+            for(const QString& mark : matchPairMarkerList){
+                if(text.startsWith(mark)){
+                    if(mark.length() > forwardDist){
+                        forwardDist = mark.length();
+                    }
+                }
+            }
+            if(forwardDist == 0){
+                // we did not find the match pair start/end string
+                // match fail
+                return 0;
+            }
+            text = text.mid(forwardDist);
+        }break;
+        case SubPatternType::Auto:{
+            const SubPattern::AutoData& data = p.autoData;
+            QStringRef valueBody = text; // make a copy at starting position
+            QStringRef nextMatchData;
 
-            // step 2: check if it is time to pop frame
-            if(f.curPatternIndex == f.lastPatternIndex){
-                // it is okay for text to be non-empty if this is the last frame
-                if(!text.isEmpty() && (stack.size() > 1)){
-                    // ...otherwise it is a failure
+            bool isMatchMade = false;
+            while(!text.isEmpty()){
+                // check if the stop condition is reached
+                if(data.isTerminateByIgnoredString){
+                    for(const QString& ignored : ctx.ignoreList){
+                        if(text.startsWith(ignored)){
+                            valueBody.chop(text.length());
+                            text = text.mid(ignored.length());
+                            isMatchMade = true;
+                            break;
+                        }
+                    }
+                    if(isMatchMade)
+                        break;
+                }else{
+                    int dist = autoSubPattern_checkNextPattern(pattern.at(patternIndex+1), text, ctx);
+                    if(dist != 0){
+                        valueBody.chop(text.length());
+                        nextMatchData = text.left(dist);
+                        text = text.mid(dist);
+                        ctx.removeTrailingIgnoredString(valueBody);
+                        isMatchMade = true;
+                        break;
+                    }
+                }
+
+                // no match for next pattern
+                // see if we have a starting match pair, if yes then fast forward until the end of match pair
+                int matchPairStartMaxLen = 0;
+                int matchPairIndex = -1;
+                for(int i = 0, n = ctx.matchPairStarts.size(); i < n; ++i){
+                    for(const QString& start : ctx.matchPairStarts.at(i)){
+                        if(text.startsWith(start)){
+                            if(matchPairIndex == -1 || matchPairStartMaxLen < start.length()){
+                                matchPairIndex = i;
+                                matchPairStartMaxLen = start.length();
+                            }
+                        }
+                    }
+                }
+                if(matchPairIndex == -1){
+                    // not starting a match pair enclosed block
+                    // just forward one character
+                    text = text.mid(1);
+                }else{
+                    // starting a match pair
+                    text = text.mid(matchPairStartMaxLen);
+                    auto resultPair = ctx.getMatchingEndAdvanceDistance(text, matchPairIndex);
+                    if(resultPair.first == -1){
+                        // no end found; bad match
+                        return 0;
+                    }
+                    text = text.mid(resultPair.first);
+                    ctx.removeLeadingIgnoredString(text);
+                }
+            }
+            if(!isMatchMade){
+                // we allow termination by ignored string to end without finding an ignored string
+                // but not for others
+                if(!data.isTerminateByIgnoredString){
                     return 0;
                 }
-
-                if(stack.size() == 1){
-                    // this is the last frame
-                    // just return
-                    return f.advanceCount;
-                }
-
-                // okay, this frame is gone
-                // continue checking on the next frame
-                stack.pop();
-                continue;
             }
-
-            // not the time to pop frame
-            // done
-            break;
+            // also increment the patternIndex here since we consumed the next pattern already
+            if(!data.isTerminateByIgnoredString){
+                patternIndex += 1;
+            }
+            // extract value if needed
+            if(!data.valueName.isEmpty()){
+                QString value = valueBody.toString();
+                if(data.nextSubPatternIncludeLength != 0){
+                    if(data.nextSubPatternIncludeLength == -1){
+                        value.append(nextMatchData);
+                    }else{
+                        value.append(nextMatchData.left(data.nextSubPatternIncludeLength));
+                    }
+                }
+                values.insert(data.valueName, value);
+            }
+        }break;
         }
     }
-    Q_UNREACHABLE();
+    // if we reach here then all patterns are successfully matched
+    return text.position() - input.position();
 }
 
 QStringList Parser::performValueTransform(const QStringList& paramName, const QHash<QString,QString>& rawValues, const QList<QList<PatternValueSubExpression> > &valueTransform)
