@@ -147,7 +147,23 @@ public:
         Error_Parser_BadPattern_Expr_BadTerminatorInclusionSpecifier,   //!< [StringDiagnostic]
         Error_Parser_BadPattern_Expr_BadNameForReference,               //!< [StringDiagnostic]
         Error_Parser_BadPattern_Expr_InvalidNextPatternForInclusion,    //!< [StringDiagnostic]
+        Error_Parser_BadPattern_Expr_UnexpectedMatchPairEnd,            //!< [StringDiagnostic]
+        Error_Parser_BadPattern_UnmatchedMatchPairStart,                //!< [StringDiagnostic]
         Error_Parser_BadPattern_EmptyPattern,                           //!< (no argument)
+
+        Error_Parser_BadValueTransform_UnterminatedExpr,                //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_NonLocalAccessInLocalOnlyEnv,    //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_InvalidNameForReference,         //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_MissingChildSearchExpr,          //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_UnterminatedChildSearchExpr,     //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_BadNumberExpr,                   //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_ExpectingLiteralExpr,            //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_UnterminatedQuote,               //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_RawStringMissingQuoteStart,      //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_GarbageAtExprEnd,                //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_Traverse_ExpectSlashOrDot,       //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_ExpectTraverseExpr,              //!< [StringDiagnostic]
+        Error_Parser_BadValueTransform_ExpectValueName,                 //!< [StringDiagnostic]
 
         Warn_Parser_MissingInitializer,                     //!< [ParameterName]
         Warn_Parser_Unused_Overwrite,                       //!< [OverwriteValueName][OverwriteRecordIndex]

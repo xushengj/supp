@@ -56,6 +56,9 @@ struct ParserNode
         struct ParamValueOverwriteRecord{
             QString paramName;  //!< the name of parameter to overwrite
             QString valueExpr;  //!< the value expression used for overwriting. Cannot reference any variables outside current ParserNode.
+                                //!< Assume parameter match pair is "<" and ">":
+                                //!< explicit literal: <(**"..."**)>, <"..."> (only useful for including parameter match pair strings inside final value)
+                                //!< value reference: <Expr> (Expr is guaranteed not starting with '(' or '"')
         };
 
         QList<ParamValueOverwriteRecord> valueOverwriteList;
@@ -195,10 +198,68 @@ private:
     struct PatternValueSubExpression{
         enum class OpType{
             Literal,
-            ValueReference
+            LocalReference,
+            ExternReference
         };
         OpType ty;
-        QString data;
+        struct LiteralData{
+            QString str;
+        };
+        struct LocalReferenceData{
+            QString valueName;
+        };
+
+        /**
+         * @brief The ExternReferenceData struct describes a non-local reference, made by a node traversal path and parameter name pair
+         *
+         * each reference should be in the form <NodeExpr>.<ParamName>
+         * no other expression allowed
+         * <NodeExpr>:
+         *      parent node: ..
+         *      child node:
+         *          <ChildNodeName>                 (for accessing the only child)
+         *          <ChildNodeName>[<LookupExpr>]   (for accessing child in that type or for lookup)
+         *          [<index expr>]                  (for accessing child by order / occurrence)
+         *
+         *      <LookupExpr>:
+         *                pure number (no +/-): index (0 based) of child node in given type
+         *                <ParamName>=="<ParamValue>": key based lookup
+         *                (+/-)pure number: (only when accessing ../<Child>[+/-offset]) index based search; 0 is the last node with given type BEFORE or IS current node
+         *       <index expr>:
+         *                pure number (no +/-): index (0 based) of node in given parent, no matter which type
+         *                (+/-)pure number:     offset of node in given parent (index = <index of this node under parent> + offset)
+         *
+         * chaining node reference: use '/', e.g. ../../Child1[0]/Child2[Key="Value"]
+         */
+        struct ExternReferenceData{
+            struct NodeTraverseStep{
+                enum class StepType{
+                    Parent,
+                    ChildByTypeAndOrder,
+                    ChildByTypeFromLookup,
+                    AnyChildByOrder
+                };
+                struct IndexOrderSearchData{
+                    int lookupNum = 0;
+                    bool isNumIndexInsteadofOffset = false;
+                };
+                struct KeyValueSearchData{
+                    QString key;
+                    QString value;
+                };
+
+                StepType ty = StepType::Parent;
+                QString childParserNodeName;
+                IndexOrderSearchData ioSearchData;
+                KeyValueSearchData kvSearchData;
+            };
+            QList<NodeTraverseStep> nodeTraversal;
+            bool isTraverseStartFromRoot = false;
+            QString valueName;
+        };
+        LiteralData literalData;
+        LocalReferenceData localReferenceData;
+        ExternReferenceData externReferenceData;
     };
     struct Pattern{
         QList<SubPattern> elements;
@@ -301,7 +362,7 @@ private:
     static QString performValueTransform(const QString& paramName,
             const QHash<QString,QString>& rawValues,
             const QList<PatternValueSubExpression>& valueTransform,
-            std::function<QString(const QString &)> externReferenceSolver
+            std::function<QString(const PatternValueSubExpression::ExternReferenceData &)> externReferenceSolver
     );
 
     /**
@@ -342,32 +403,12 @@ private:
 
         /**
          * @brief solveExternReference helper function for solve extern variable reference from parser node specified by nodeIndex
-         *
-         * each reference should be in the form <NodeExpr>::<ParamName>
-         * no other expression allowed
-         * <NodeExpr>:
-         *      parent node: ..
-         *      child node:
-         *          <ChildNodeName>                 (for accessing the only child)
-         *          <ChildNodeName>[<LookupExpr>]   (for accessing child in that type or for lookup)
-         *          [<index expr>]                  (for accessing child by order / occurrence)
-         *
-         *      <LookupExpr>:
-         *                pure number (no +/-): index (0 based) of child node in given type
-         *                <ParamName>=="<ParamValue>": key based lookup
-         *                (+/-)pure number: (only when accessing ../<Child>[+/-offset]) index based search; 0 is the last node with given type BEFORE or IS current node
-         *       <index expr>:
-         *                pure number (no +/-): index (0 based) of node in given parent, no matter which type
-         *                (+/-)pure number:     offset of node in given parent (index = <index of this node under parent> + offset)
-         *
-         * chaining node reference: use '/', e.g. ../../Child1[0]/Child2[Key="Value"]
-         *
          * @param p the Parser parent
          * @param expr the extern variable reference expression
          * @param nodeIndex the parser node index in parserNodes where the expr is evaluated
          * @return pair of <isGood, result string>
          */
-        std::pair<bool,QString> solveExternReference(const Parser &p, const QString& expr, int nodeIndex);
+        std::pair<bool,QString> solveExternReference(const Parser &p, const PatternValueSubExpression::ExternReferenceData& expr, int nodeIndex);
     };
 
 private:

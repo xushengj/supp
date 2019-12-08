@@ -264,7 +264,6 @@ Parser* Parser::getParser(const ParserPolicy& policy, const IRRootType& ir, Diag
                         QList<PatternValueSubExpression> dummyExpr;
                         PatternValueSubExpression dummy;
                         dummy.ty = PatternValueSubExpression::OpType::Literal;
-                        dummy.data.clear();
                         dummyExpr.push_back(dummy);
                         destPattern.valueTransform.push_back(dummyExpr);
                     }
@@ -507,6 +506,13 @@ bool Parser::ParseContext::parsePatternString(
 
     // keep a copy of first patterns we put
     int startIndex = result.size();
+
+    struct MatchPairFrame{
+        int index;
+        QStringRef startMarkRef; // used for error reporting
+    };
+
+    QList<MatchPairFrame> matchPairStack;// used to report error if the pattern don't have matching match pairs
 
     // we will do some fixup if this is true
     QStringRef lastAutoSubPatternStr;
@@ -838,12 +844,150 @@ bool Parser::ParseContext::parsePatternString(
             // done processing cases with exprStartMark
         }else{
             // start of a literal, or a match pair marker
-            // TODO
+            bool isMatchPairFound = false;
+
+            if(!matchPairStack.isEmpty()){
+                // check if it is the matching end
+                int index = matchPairStack.back().index;
+                int maxLen = 0;
+                for(const QString& endMark : matchPairEnds.at(index)){
+                    if(view.startsWith(endMark)){
+                        if(maxLen < endMark.length()){
+                            maxLen = endMark.length();
+                        }
+                    }
+                }
+                if(maxLen > 0){
+                    matchPairStack.pop_back();
+                    view = view.mid(maxLen);
+                    SubPattern expr;
+                    expr.ty = SubPatternType::MatchPair;
+                    expr.matchPairData.matchPairIndex = index;
+                    expr.matchPairData.isStart = false;
+                    result.push_back(expr);
+                    isMatchPairFound = true;
+                }
+            }
+
+            if(!isMatchPairFound){
+                // check if we are starting a scope
+                int maxLen = 0;
+                int matchPairIndex = -1;
+                for(int i = 0, n = matchPairStarts.size(); i < n; ++i){
+                    for(const QString& startMark : matchPairStarts.at(i)){
+                        if(view.startsWith(startMark)){
+                            if(maxLen < startMark.length()){
+                                maxLen = startMark.length();
+                                matchPairIndex = i;
+                            }
+                        }
+                    }
+                }
+                if(matchPairIndex > 0){
+                    MatchPairFrame f;
+                    f.index = matchPairIndex;
+                    f.startMarkRef = view.left(maxLen);
+                    matchPairStack.push_back(f);
+                    view = view.mid(maxLen);
+                    SubPattern expr;
+                    expr.ty = SubPatternType::MatchPair;
+                    expr.matchPairData.matchPairIndex = matchPairIndex;
+                    expr.matchPairData.isStart = true;
+                    result.push_back(expr);
+                    isMatchPairFound = true;
+                }else{
+                    // check if this is a match pair end without start mark
+                    // if yes then report an error
+                    int endMaxLen = 0;
+                    for(int i = 0, n = matchPairEnds.size(); i < n; ++i){
+                        for(const QString& endMark : matchPairEnds.at(i)){
+                            if(Q_UNLIKELY(view.startsWith(endMark))){
+                                if(endMaxLen < endMark.length()){
+                                    endMaxLen = endMark.length();
+                                }
+                            }
+                        }
+                    }
+                    if(Q_UNLIKELY(endMaxLen > 0)){
+                        QStringRef endMarkRef = view.left(endMaxLen);
+                        StringDiagnosticRecord d;
+                        d.str = pattern;
+                        // both interval is the end marker string
+                        d.errorStart = d.infoStart = endMarkRef.position();
+                        d.errorEnd   = d.infoEnd   = endMarkRef.position() + endMarkRef.length();
+                        diagnostic(Diag::Error_Parser_BadPattern_Expr_UnexpectedMatchPairEnd, d);
+                        return false;
+                    }
+                    // now we confirm that we are starting a literal
+                    // keep extracting characters until a start indicator appears
+                    QStringRef literalStart = view;
+                    while(true){
+                        view = view.mid(1);
+
+                        if(view.isEmpty())
+                            break;
+
+                        int removedLen = removeLeadingIgnoredString(view);
+
+                        // finding a string from ignored list terminates current implicit string literal
+                        if(removedLen > 0)
+                            break;
+
+                        if(view.startsWith(exprStartMark))
+                            break;
+
+                        bool isMatchPairFound = false;
+                        for(int i = 0, n = matchPairStarts.size(); i < n; ++i){
+                            for(const QString& mark : matchPairStarts.at(i)){
+                                if(view.startsWith(mark)){
+                                    isMatchPairFound = true;
+                                    break;
+                                }
+                            }
+                            if(isMatchPairFound)
+                                break;
+                        }
+                        if(isMatchPairFound)
+                            break;
+                        for(int i = 0, n = matchPairEnds.size(); i < n; ++i){
+                            for(const QString& mark : matchPairEnds.at(i)){
+                                if(view.startsWith(mark)){
+                                    isMatchPairFound = true;
+                                    break;
+                                }
+                            }
+                            if(isMatchPairFound)
+                                break;
+                        }
+                        if(isMatchPairFound)
+                            break;
+                    }
+                    SubPattern expr;
+                    expr.ty = SubPatternType::Literal;
+                    expr.literalData.str = literalStart.chopped(view.length()).toString();
+                    result.push_back(expr);
+                }
+                // done cases not ending a match pair enclosure
+            }
+            // done for match pair and literals
         }
     }
 
+    // report error if we don't have matching match pairs
+    if(Q_UNLIKELY(!matchPairStack.isEmpty())){
+        StringDiagnosticRecord d;
+        d.str = pattern;
+        for(int i = 0, n = matchPairStack.size(); i < n; ++i){
+            const auto& f = matchPairStack.at(i);
+            d.errorStart = d.infoStart = f.startMarkRef.position();
+            d.errorEnd   = d.infoEnd   = f.startMarkRef.position() + f.startMarkRef.length();
+            diagnostic(Diag::Error_Parser_BadPattern_UnmatchedMatchPairStart, d);
+        }
+        return false;
+    }
+
     // no empty pattern accepted
-    if(result.size() == startIndex){
+    if(Q_UNLIKELY(result.size() == startIndex)){
         diagnostic(Diag::Error_Parser_BadPattern_EmptyPattern);
         return false;
     }
@@ -878,8 +1022,434 @@ bool Parser::ParseContext::parseValueTransformString(const QString& transform,
         bool isLocalOnly,
         DiagnosticEmitterBase &diagnostic)
 {
-    // TODO
-    return false;
+    auto helper_getEnclosedLiteral = [&](QStringRef text, QStringRef& result, int faultInfoStartOffset)->int{
+        bool isRawStringLiteral = text.startsWith('(');
+        bool isDirectQuotedStringLiteral = text.startsWith('"');
+        if(Q_UNLIKELY(!isRawStringLiteral && !isDirectQuotedStringLiteral)){
+            // nothing in expectation
+            StringDiagnosticRecord d;
+            d.str = transform;
+            // info interval is from the offset given by faultInfoStartOffset to first character
+            d.infoStart = faultInfoStartOffset + text.position();
+            d.infoEnd = text.position() + 1;
+            // error interval is the first character of text
+            d.errorStart = text.position();
+            d.errorEnd = text.position() + 1;
+            diagnostic(Diag::Error_Parser_BadValueTransform_ExpectingLiteralExpr, d);
+            return -1;
+        }
+        int nextDoubleQuoteIndex = text.indexOf('"',1);
+        if(isDirectQuotedStringLiteral){
+            if(Q_UNLIKELY(nextDoubleQuoteIndex == -1)){
+                // unterminated quote
+                StringDiagnosticRecord d;
+                d.str = transform;
+                // info interval is from the offset given by faultInfoStartOffset to first character
+                d.infoStart = faultInfoStartOffset + text.position();
+                d.infoEnd = text.position() + 1;
+                // error interval is the first character of text
+                d.errorStart = text.position();
+                d.errorEnd = text.position() + 1;
+                diagnostic(Diag::Error_Parser_BadValueTransform_UnterminatedQuote, d);
+                return -1;
+            }
+            result = text.mid(1).left(nextDoubleQuoteIndex-1);
+            return nextDoubleQuoteIndex+1;
+        }
+        // raw string literal style quote
+        if(Q_UNLIKELY(nextDoubleQuoteIndex == -1)){
+            // raw string missing starting quote
+            StringDiagnosticRecord d;
+            d.str = transform;
+            // info interval is from the offset given by faultInfoStartOffset to first character
+            d.infoStart = faultInfoStartOffset + text.position();
+            d.infoEnd = text.position() + 1;
+            // error interval is the first character of text
+            d.errorStart = text.position();
+            d.errorEnd = text.position() + 1;
+            diagnostic(Diag::Error_Parser_BadValueTransform_RawStringMissingQuoteStart, d);
+            return -1;
+        }
+        QStringRef rawStringStartMark = text.left(nextDoubleQuoteIndex+1);
+        QString rawStringEndMark;
+        rawStringEndMark.reserve(rawStringStartMark.size());
+        rawStringEndMark.append('"');
+        rawStringEndMark.append(rawStringStartMark.mid(1).chopped(1));
+        rawStringEndMark.append(')');
+        int endIndex = text.indexOf(rawStringEndMark, nextDoubleQuoteIndex+1);
+        if(Q_UNLIKELY(endIndex == -1)){
+            // unterminated quote
+            StringDiagnosticRecord d;
+            d.str = transform;
+            // info interval is from the offset given by faultInfoStartOffset to end of rawStringStartMark
+            d.infoStart = faultInfoStartOffset + text.position();
+            d.infoEnd = rawStringStartMark.position() + rawStringStartMark.length();
+            // error interval is rawStringStartMark
+            d.errorStart = rawStringStartMark.position();
+            d.errorEnd = rawStringStartMark.position() + rawStringStartMark.length();
+            diagnostic(Diag::Error_Parser_BadValueTransform_UnterminatedQuote, d);
+            return -1;
+        }
+        result = text.left(endIndex).mid(rawStringStartMark.length());
+        return endIndex + rawStringEndMark.length();
+    };
+
+    QStringRef text(&transform);
+    while(!text.isEmpty()){
+        int index = text.indexOf(exprStartMark);
+        if(index == -1){
+            // no more special patterns to handle
+            PatternValueSubExpression expr;
+            expr.ty = PatternValueSubExpression::OpType::Literal;
+            expr.literalData.str = text.toString();
+            result.push_back(expr);
+            return true;
+        }
+
+        if(index != 0){
+            QStringRef literal = text.left(index);
+            // we will start a special part
+            // add this literal to output first
+            PatternValueSubExpression expr;
+            expr.ty = PatternValueSubExpression::OpType::Literal;
+            expr.literalData.str = literal.toString();
+            result.push_back(expr);
+            text = text.mid(index);
+        }
+
+        // now we need to deal with a special block
+        // skip the start mark first
+        Q_ASSERT(text.startsWith(exprStartMark));
+        QStringRef bodyStart = text.mid(exprStartMark.length());
+        bool isRawStringLiteral = bodyStart.startsWith('(');
+        bool isDirectQuotedStringLiteral = bodyStart.startsWith('"');
+        if(isRawStringLiteral || isDirectQuotedStringLiteral){
+            QStringRef literal;
+            int advanceDist = helper_getEnclosedLiteral(bodyStart, literal, -exprStartMark.length());
+            if(advanceDist == -1){
+                return false;
+            }
+            QStringRef textAfterString = bodyStart.mid(advanceDist);
+            if(Q_UNLIKELY(textAfterString.isEmpty())){
+                // unterminated expr
+                StringDiagnosticRecord d;
+                d.str = transform;
+                // info interval is from start mark to position of textAfterString
+                d.infoStart = text.position();
+                d.infoEnd = textAfterString.position();
+                // error interval is the start mark
+                d.errorStart = text.position();
+                d.errorEnd = text.position() + exprStartMark.length();
+                diagnostic(Diag::Error_Parser_BadValueTransform_UnterminatedExpr, d);
+                return false;
+            }else if(Q_UNLIKELY(!textAfterString.startsWith(exprEndMark))){
+                // garbage at end
+                StringDiagnosticRecord d;
+                d.str = transform;
+                // info interval is from start mark to position of textAfterString
+                d.infoStart = text.position();
+                d.infoEnd = textAfterString.position();
+                // error interval is the first character of textAfterString
+                d.errorStart = textAfterString.position();
+                d.errorEnd = textAfterString.position()+1;
+                diagnostic(Diag::Error_Parser_BadValueTransform_GarbageAtExprEnd, d);
+                return false;
+            }
+            PatternValueSubExpression expr;
+            expr.ty = PatternValueSubExpression::OpType::Literal;
+            expr.literalData.str = literal.toString();
+            result.push_back(expr);
+            text = textAfterString.mid(exprEndMark.length());
+        }else{
+            // direct search for end mark, speculatively for extern reference
+            int endMarkIndex = bodyStart.indexOf(exprEndMark);
+            if(Q_UNLIKELY(endMarkIndex == -1)){
+                StringDiagnosticRecord d;
+                d.str = transform;
+                // info interval is everything after start mark
+                d.infoStart = text.position();
+                d.infoEnd = transform.length();
+                // error interval is exprStartMark
+                d.errorStart = text.position();
+                d.errorEnd = bodyStart.position();
+                diagnostic(Diag::Error_Parser_BadValueTransform_UnterminatedExpr, d);
+                return false;
+            }
+            QStringRef refVal = bodyStart.left(endMarkIndex);
+            bool isLocalReference = refVal.contains('.');
+            if(Q_UNLIKELY(!isLocalReference && isLocalOnly)){
+                StringDiagnosticRecord d;
+                d.str = transform;
+                // info interval is everything inside expr
+                d.infoStart = text.position();
+                d.infoEnd = bodyStart.position() + endMarkIndex + exprEndMark.length();
+                // error interval is refVal
+                d.errorStart = refVal.position();
+                d.errorEnd = refVal.position() + refVal.length();
+                diagnostic(Diag::Error_Parser_BadValueTransform_NonLocalAccessInLocalOnlyEnv, d);
+                return false;
+            }
+            PatternValueSubExpression expr;
+            if(isLocalReference){
+                expr.ty = PatternValueSubExpression::OpType::LocalReference;
+                expr.localReferenceData.valueName = refVal.toString();
+                if(Q_UNLIKELY(!IRNodeType::validateName(diagnostic, expr.localReferenceData.valueName))){
+                    StringDiagnosticRecord d;
+                    d.str = transform;
+                    // info interval is everything inside expr
+                    d.infoStart = text.position();
+                    d.infoEnd = bodyStart.position() + endMarkIndex + exprEndMark.length();
+                    // error interval is refVal
+                    d.errorStart = refVal.position();
+                    d.errorEnd = refVal.position() + refVal.length();
+                    diagnostic(Diag::Error_Parser_BadValueTransform_InvalidNameForReference, d);
+                    return false;
+                }
+                referencedValues.insert(expr.localReferenceData.valueName);
+                text = bodyStart.mid(endMarkIndex + exprEndMark.length());
+            }else{
+                expr.ty = PatternValueSubExpression::OpType::ExternReference;
+                // because we allow string literals in search expression, the endMarkIndex can be invalid
+                // therefore for ExternReference we need to go step by step; parse all node traversal steps then value name
+                QList<PatternValueSubExpression::ExternReferenceData::NodeTraverseStep>& stepResult = expr.externReferenceData.nodeTraversal;
+                QStringRef traverseDistLeft = bodyStart;
+                if(traverseDistLeft.startsWith('/')){
+                    expr.externReferenceData.isTraverseStartFromRoot = true;
+                    traverseDistLeft = traverseDistLeft.mid(1);
+                }
+                if(Q_UNLIKELY(traverseDistLeft.isEmpty())){
+                    StringDiagnosticRecord d;
+                    d.str = transform;
+                    // info interval is bodyStart to current position
+                    d.infoStart = bodyStart.position();
+                    d.infoEnd = traverseDistLeft.position();
+                    // error interval is the last character we just consumed
+                    d.errorStart = traverseDistLeft.position() - 1;
+                    d.errorEnd = traverseDistLeft.position();
+                    diagnostic(Diag::Error_Parser_BadValueTransform_ExpectTraverseExpr, d);
+                    return false;
+                }
+                while(true){
+                    Q_ASSERT(!traverseDistLeft.isEmpty());
+                    int stepStart = traverseDistLeft.position(); // for error reporting
+                    PatternValueSubExpression::ExternReferenceData::NodeTraverseStep s;
+                    if(traverseDistLeft.startsWith('/')){
+                        traverseDistLeft = traverseDistLeft.mid(1);
+                        continue;
+                    }
+                    if(traverseDistLeft.startsWith("./")){
+                        traverseDistLeft = traverseDistLeft.mid(2);
+                        continue;
+                    }
+                    if(traverseDistLeft.startsWith("../")){
+                        s.ty = PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::Parent;
+                        stepResult.push_back(s);
+                        traverseDistLeft = traverseDistLeft.mid(3);
+                        continue;
+                    }
+                    // everything else is for going to child
+                    int openSquareBracketIndex = traverseDistLeft.indexOf('[');
+                    if(Q_UNLIKELY(openSquareBracketIndex == -1)){
+                        StringDiagnosticRecord d;
+                        d.str = transform;
+                        // info interval is everything from bodyStart to current position
+                        d.infoStart = bodyStart.position();
+                        d.infoEnd = bodyStart.position()+ bodyStart.length();
+                        // error interval is everything in traverseDistLeft (basically this step)
+                        d.errorStart = traverseDistLeft.position();
+                        d.errorEnd = traverseDistLeft.position() + traverseDistLeft.length();
+                        diagnostic(Diag::Error_Parser_BadValueTransform_MissingChildSearchExpr, d);
+                        return false;
+                    }
+                    bool isChildNameProvided = (openSquareBracketIndex > 0);
+                    if(isChildNameProvided){
+                        // we have a child name field
+                        QStringRef childName = traverseDistLeft.left(openSquareBracketIndex);
+                        s.childParserNodeName = childName.toString();
+                        if(Q_UNLIKELY(!IRNodeType::validateName(diagnostic, s.childParserNodeName))){
+                            StringDiagnosticRecord d;
+                            d.str = transform;
+                            // info interval is everything from bodyStart to current position
+                            d.infoStart = bodyStart.position();
+                            d.infoEnd = childName.position() + childName.length();
+                            // error interval is the child node name
+                            d.errorStart = childName.position();
+                            d.errorEnd = childName.position() + childName.length();
+                            diagnostic(Diag::Error_Parser_BadValueTransform_InvalidNameForReference, d);
+                            return false;
+                        }
+                        traverseDistLeft = traverseDistLeft.mid(openSquareBracketIndex);
+                    }
+                    traverseDistLeft = traverseDistLeft.mid(1); // skip '['
+                    int closeSquareBracketIndex = traverseDistLeft.indexOf(']');
+                    if(Q_UNLIKELY(closeSquareBracketIndex == -1)){
+                        StringDiagnosticRecord d;
+                        d.str = transform;
+                        // info interval is everything from bodyStart to current position
+                        d.infoStart = bodyStart.position();
+                        d.infoEnd = traverseDistLeft.position();
+                        // error interval is the '['
+                        d.errorStart = stepStart + openSquareBracketIndex;
+                        d.errorEnd = stepStart + openSquareBracketIndex + 1;
+                        Q_ASSERT(d.infoEnd == d.errorEnd);
+                        diagnostic(Diag::Error_Parser_BadValueTransform_UnterminatedChildSearchExpr, d);
+                        return false;
+                    }
+                    // no matter whether we have a literal with ']' included, if we have a key based search,
+                    // the "==" string must appear before ']' because the only thing before "==" is the key parameter name
+                    QStringRef possibleSearchExprEnclosure = traverseDistLeft.left(closeSquareBracketIndex);
+                    int keyEndIndex = possibleSearchExprEnclosure.indexOf("==");
+                    if(keyEndIndex == -1){
+                        // number (index/offset) based search
+                        if(isChildNameProvided){
+                            s.ty = PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::ChildByTypeAndOrder;
+                        }else{
+                            s.ty = PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::AnyChildByOrder;
+                        }
+                        QStringRef num = possibleSearchExprEnclosure;
+                        s.ioSearchData.isNumIndexInsteadofOffset = !(num.startsWith('+') || num.startsWith('-'));
+                        bool isNumberGood = false;
+                        s.ioSearchData.lookupNum = num.toInt(&isNumberGood);
+                        if(Q_UNLIKELY(!isNumberGood)){
+                            StringDiagnosticRecord d;
+                            d.str = transform;
+                            // info interval is everything from stepStart to current position
+                            d.infoStart = stepStart;
+                            d.infoEnd = num.position() + num.length();
+                            // error interval is the number expression
+                            d.errorStart = num.position();
+                            d.errorEnd = num.position() + num.length();
+                            diagnostic(Diag::Error_Parser_BadValueTransform_BadNumberExpr, d);
+                            return false;
+                        }
+                        traverseDistLeft = traverseDistLeft.mid(closeSquareBracketIndex+1);
+                    }else{
+                        // key value based search
+                        // possibleSearchExprEnclosure can be invalid
+                        s.ty = PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::ChildByTypeFromLookup;
+                        QStringRef keyStr = traverseDistLeft.left(keyEndIndex);
+                        s.kvSearchData.key = keyStr.toString();
+                        if(Q_UNLIKELY(!IRNodeType::validateName(diagnostic, s.kvSearchData.key))){
+                            StringDiagnosticRecord d;
+                            d.str = transform;
+                            // info interval is [<key>==
+                            d.infoStart = traverseDistLeft.position()-1;
+                            d.infoEnd = traverseDistLeft.position()+s.kvSearchData.key.length()+2;
+                            // error interval is keyStr
+                            d.errorStart = keyStr.position();
+                            d.errorEnd = keyStr.position() + keyStr.length();
+                            diagnostic(Diag::Error_Parser_BadValueTransform_InvalidNameForReference, d);
+                            return false;
+                        }
+                        traverseDistLeft = traverseDistLeft.mid(keyEndIndex+2); // skip "=="
+                        QStringRef valueStr;
+                        int advanceDist = helper_getEnclosedLiteral(traverseDistLeft, valueStr, stepStart - traverseDistLeft.position());
+                        if(Q_UNLIKELY(advanceDist == -1)){
+                            return false;
+                        }
+                        s.kvSearchData.value = valueStr.toString();
+                        traverseDistLeft = traverseDistLeft.mid(advanceDist);
+                    }
+                    stepResult.push_back(s);
+                    // consume the '/' after this step, or '.' if we just finished the last level of traversal
+                    if(Q_UNLIKELY(traverseDistLeft.isEmpty())){
+                        StringDiagnosticRecord d;
+                        d.str = transform;
+                        // info interval is everything starting from bodyStart
+                        d.infoStart = bodyStart.position();
+                        d.infoEnd = traverseDistLeft.position() + traverseDistLeft.length();
+                        // error interval is the expression start mark
+                        d.errorStart = bodyStart.position() - exprStartMark.length();
+                        d.errorEnd = bodyStart.position();
+                        diagnostic(Diag::Error_Parser_BadValueTransform_UnterminatedExpr, d);
+                        return false;
+                    }
+                    if(traverseDistLeft.startsWith('.')){
+                        // node traverse complete
+                        traverseDistLeft = traverseDistLeft.mid(1); // consume '.'
+                        break;
+                    }else if(Q_UNLIKELY(!traverseDistLeft.startsWith('/'))){
+                        StringDiagnosticRecord d;
+                        d.str = transform;
+                        // info interval is stepStart to first character if traverseDistLeft
+                        d.infoStart = stepStart;
+                        d.infoEnd = traverseDistLeft.position()+1;
+                        // error interval is the first character of traverseDistLeft
+                        d.errorStart = traverseDistLeft.position();
+                        d.errorEnd = traverseDistLeft.position()+1;
+                        diagnostic(Diag::Error_Parser_BadValueTransform_Traverse_ExpectSlashOrDot, d);
+                        return false;
+                    }
+                    traverseDistLeft = traverseDistLeft.mid(1); // consume '/'
+                    if(Q_UNLIKELY(traverseDistLeft.isEmpty())){
+                        StringDiagnosticRecord d;
+                        d.str = transform;
+                        // info interval is bodyStart to current position
+                        d.infoStart = bodyStart.position();
+                        d.infoEnd = traverseDistLeft.position();
+                        // error interval is the last character we just consumed
+                        d.errorStart = traverseDistLeft.position() - 1;
+                        d.errorEnd = traverseDistLeft.position();
+                        diagnostic(Diag::Error_Parser_BadValueTransform_ExpectTraverseExpr, d);
+                        return false;
+                    }
+                }
+                // node traversal expression complete
+                // now everything left in traverseDistLeft are beginning of value reference
+                int realEndMarkIndex = traverseDistLeft.indexOf(exprEndMark);
+                if(Q_UNLIKELY(realEndMarkIndex == -1)){
+                    StringDiagnosticRecord d;
+                    d.str = transform;
+                    // info interval is from bodyStart to current position
+                    d.infoStart = bodyStart.position();
+                    d.infoEnd = traverseDistLeft.position();
+                    // error interval is the exprStartMark
+                    d.errorStart = bodyStart.position() - exprStartMark.length();
+                    d.errorEnd = bodyStart.position();
+                    diagnostic(Diag::Error_Parser_BadValueTransform_UnterminatedExpr, d);
+                    return false;
+                }
+                if(Q_UNLIKELY(realEndMarkIndex == 0)){
+                    // no value reference
+                    StringDiagnosticRecord d;
+                    d.str = transform;
+                    // info interval is from bodyStart to current position
+                    d.infoStart = bodyStart.position();
+                    d.infoEnd = traverseDistLeft.position();
+                    // error interval is the last character we consumed and the exprEndMark
+                    d.errorStart = traverseDistLeft.position()-1;
+                    d.errorEnd = traverseDistLeft.position() + exprEndMark.length();
+                    diagnostic(Diag::Error_Parser_BadValueTransform_ExpectValueName, d);
+                    return false;
+                }
+                QStringRef referencedValueName = traverseDistLeft.left(realEndMarkIndex);
+                expr.externReferenceData.valueName = referencedValueName.toString();
+                if(Q_UNLIKELY(!IRNodeType::validateName(diagnostic, expr.externReferenceData.valueName))){
+                    StringDiagnosticRecord d;
+                    d.str = transform;
+                    // info interval is everything inside expr
+                    d.infoStart = bodyStart.position() - exprStartMark.length();
+                    d.infoEnd = referencedValueName.position() + referencedValueName.length() + exprEndMark.length();
+                    // error interval is referencedValueName
+                    d.errorStart = referencedValueName.position();
+                    d.errorEnd = referencedValueName.position() + referencedValueName.length();
+                    diagnostic(Diag::Error_Parser_BadValueTransform_InvalidNameForReference, d);
+                    return false;
+                }
+                // okay, everything looks good
+                text = traverseDistLeft.mid(realEndMarkIndex + exprEndMark.length());
+            } // done handling local / extern reference
+            result.push_back(expr);
+        } // done handling any non-literal
+    }
+    // TODO check:
+    // 1. offset based traverse only allowed if going into a peer
+#ifdef _MSC_VER
+#pragma message ("warning: check not implemented")
+#else
+#warning check not implemented
+#endif
+    return true;
 }
 
 QList<Parser::ParserNodeData> Parser::patternMatch(QVector<QStringRef> &text, DiagnosticEmitterBase& diagnostic) const
@@ -1185,9 +1755,132 @@ QList<Parser::ParserNodeData> Parser::patternMatch(QVector<QStringRef> &text, Di
     return parserNodes;
 }
 
-std::pair<bool,QString> Parser::IRBuildContext::solveExternReference(const Parser& p, const QString& expr, int nodeIndex)
+std::pair<bool,QString> Parser::IRBuildContext::solveExternReference(const Parser& p, const PatternValueSubExpression::ExternReferenceData &expr, int nodeIndex)
 {
     std::pair<bool,QString> fail(false, QString());
+    int currentNodeIndex = nodeIndex;
+    if(expr.isTraverseStartFromRoot){
+        currentNodeIndex = 0;
+    }
+    // at time of writing, 4 traverse type is supported: Parent, ChildByTypeAndOrder, ChildByTypeFromLookup, and AnyChildByOrder
+    for(const auto& step : expr.nodeTraversal){
+        // handle the easiest case that go to parent first
+        if(step.ty == PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::Parent){
+            // do not go before root (doing .. on root evaluates to root itself)
+            if(currentNodeIndex > 0){
+                currentNodeIndex = parserNodes.at(currentNodeIndex).parentIndex;
+            }
+            continue;
+        }
+        // now it is going into child
+        const ParserNodeData& curNode = parserNodes.at(currentNodeIndex);
+        const Node& curNodeTy = p.nodes.at(curNode.nodeTypeIndex);
+        if(step.ty == PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::AnyChildByOrder){
+            // get the list of candidate nodes
+            const QList<int>& children = getNodeChildList(currentNodeIndex, -1);
+            int childIndex = step.ioSearchData.lookupNum;
+            if(!step.ioSearchData.isNumIndexInsteadofOffset){
+                // offset based search
+                childIndex += parserNodes.at(nodeIndex).indexWithinParent;
+            }
+            if(childIndex < 0 || childIndex >= children.size()){
+                // out of bound; bad index
+                return fail;
+            }
+            currentNodeIndex = children.at(childIndex);
+            continue;
+        }
+        // now we must be indexing into child with specific type
+        // we should have a valid child name in this case
+        // get the childTypeIndex by searching through names
+        int childTypeIndex = -1;
+        for(int child : curNodeTy.allowedChildNodeIndexList){
+            const Node& curChild = p.nodes.at(child);
+            if(curChild.nodeName == step.childParserNodeName){
+                childTypeIndex = child;
+                break;
+            }
+        }
+        if(childTypeIndex == -1){
+            // no such child found; error
+            return fail;
+        }
+
+        // get the list of candidate nodes
+        const QList<int>& children = getNodeChildList(currentNodeIndex, childTypeIndex);
+
+        if(step.ty == PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::ChildByTypeFromLookup){
+            const Node& childTy = p.nodes.at(childTypeIndex);
+            int paramIndex = childTy.paramName.indexOf(step.kvSearchData.key);
+            // the validation code should reject code like this
+            Q_ASSERT(paramIndex != -1);
+
+            // if the parent node is the same:
+            // use the first match "before" current node, if there is one
+            // otherwise, use the first match "after" current node, if there is one
+            // otherwise, fail
+            // if the parent node is not the same: just go through the list from bottom to top and stop at first result
+            int startIndex = children.size() - 1;
+            if(curNode.parentIndex == parserNodes.at(nodeIndex).parentIndex){
+                // find the first child node in given type that is either before or is current node
+                auto iter = std::upper_bound(children.begin(), children.end(), nodeIndex);
+                startIndex = static_cast<int>(std::distance(children.begin(), iter))-1;
+            }
+
+            bool isFound = false;
+            for(int i = startIndex; i >= 0; --i){
+                int child = children.at(i);
+                const ParserNodeData& curChild = parserNodes.at(child);
+                if(curChild.params.at(paramIndex) == step.kvSearchData.value){
+                    currentNodeIndex = child;
+                    isFound = true;
+                    break;
+                }
+            }
+            if(isFound)
+                continue;
+
+            // search from the startIndex downward
+            for(int i = startIndex+1; i < children.size(); ++i){
+                int child = children.at(i);
+                const ParserNodeData& curChild = parserNodes.at(child);
+                if(curChild.params.at(paramIndex) == step.kvSearchData.value){
+                    currentNodeIndex = child;
+                    isFound = true;
+                    break;
+                }
+            }
+            if(!isFound)
+                return fail;
+        }else{
+            // otherwise we are just searching by order
+            Q_ASSERT(step.ty == PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::AnyChildByOrder);
+            int childIndex = step.ioSearchData.lookupNum;
+            if(!step.ioSearchData.isNumIndexInsteadofOffset){
+                // offset based search
+                auto iter = std::upper_bound(children.begin(), children.end(), nodeIndex);
+                int baseIndex = static_cast<int>(std::distance(children.begin(), iter))-1;
+                childIndex += baseIndex;
+            }
+            if(childIndex < 0 || childIndex >= children.size()){
+                // out of bound; bad index
+                return fail;
+            }
+            currentNodeIndex = children.at(childIndex);
+            continue;
+        }
+    }
+    // okay, all steps are done
+    // access the member
+    const ParserNodeData& data = parserNodes.at(currentNodeIndex);
+    int paramIndex = p.nodes.at(data.nodeTypeIndex).paramName.indexOf(expr.valueName);
+    if(paramIndex == -1){
+        // no such member under the node
+        return fail;
+    }
+    Q_ASSERT(paramIndex < data.params.size());
+    return std::make_pair(true, data.params.at(paramIndex));
+#if 0
     int splitterIndex = expr.indexOf(QChar(':'));
     if(splitterIndex == -1){
         return fail;
@@ -1362,6 +2055,7 @@ std::pair<bool,QString> Parser::IRBuildContext::solveExternReference(const Parse
 
     // no parameter with given name found
     return fail;
+#endif
 }
 
 const QList<int>& Parser::IRBuildContext::getNodeChildList(int parentIndex, int childNodeTypeIndex)
@@ -1467,7 +2161,7 @@ IRRootInstance* Parser::parse(QVector<QStringRef> &text, const IRRootType& ir, D
                 bool isAnyExprGood = false;
                 for(const auto& expr : exprList){
                     bool isExprGood = true;
-                    value = performValueTransform(irParamName, nodeStrData, expr, [&](const QString& e)->QString{
+                    value = performValueTransform(irParamName, nodeStrData, expr, [&](const PatternValueSubExpression::ExternReferenceData& e)->QString{
                         QString retVal;
                         bool isThisOneGood = true;
                         std::tie(isThisOneGood, retVal) = ctx.solveExternReference(*this, e, parserNodeIndex);
@@ -1890,12 +2584,15 @@ QStringList Parser::performValueTransform(const QStringList& paramName, const QH
             for(const auto& expr : list){
                 switch(expr.ty){
                 case PatternValueSubExpression::OpType::Literal:{
-                    value.append(expr.data);
+                    value.append(expr.literalData.str);
                 }break;
-                case PatternValueSubExpression::OpType::ValueReference:{
-                    Q_ASSERT(rawValues.count(expr.data) > 0);
-                    value.append(rawValues.value(expr.data));
+                case PatternValueSubExpression::OpType::LocalReference:{
+                    Q_ASSERT(rawValues.count(expr.localReferenceData.valueName) > 0);
+                    value.append(rawValues.value(expr.localReferenceData.valueName));
                 }break;
+                case PatternValueSubExpression::OpType::ExternReference:{
+                    Q_UNREACHABLE();
+                }
                 }
             }
         }
@@ -1908,7 +2605,7 @@ QStringList Parser::performValueTransform(const QStringList& paramName, const QH
 QString Parser::performValueTransform(const QString &paramName,
         const QHash<QString,QString>& rawValues,
         const QList<PatternValueSubExpression> &valueTransform,
-        std::function<QString(const QString &)> externReferenceSolver)
+        std::function<QString(const PatternValueSubExpression::ExternReferenceData&)> externReferenceSolver)
 {
     if(valueTransform.isEmpty())
         return rawValues.value(paramName);
@@ -1917,14 +2614,14 @@ QString Parser::performValueTransform(const QString &paramName,
     for(const auto& expr : valueTransform){
         switch(expr.ty){
         case PatternValueSubExpression::OpType::Literal:{
-            value.append(expr.data);
+            value.append(expr.literalData.str);
         }break;
-        case PatternValueSubExpression::OpType::ValueReference:{
-            if(rawValues.count(expr.data) > 0){
-                value.append(rawValues.value(expr.data));
-            }else{
-                value.append(externReferenceSolver(expr.data));
-            }
+        case PatternValueSubExpression::OpType::LocalReference:{
+            Q_ASSERT(rawValues.count(expr.localReferenceData.valueName) > 0);
+            value.append(rawValues.value(expr.localReferenceData.valueName));
+        }break;
+        case PatternValueSubExpression::OpType::ExternReference:{
+            value.append(externReferenceSolver(expr.externReferenceData));
         }break;
         }
     }
