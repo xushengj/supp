@@ -189,6 +189,24 @@ public:
         Error_Json_BadReference_Output,     //!< [OutputName]
         Error_Json_BadReference_IRNodeType, //!< [IRNodeTypeName]
 
+        Warn_XML_MismatchedIRTypeName,              //!< [LineNumber][ColumnNumber][ExpectedIRRootTypeName][ActualIRRootTypeName]
+        Warn_XML_UnexpectedAttribute,               //!< [LineNumber][ColumnNumber][ElementName][AttributeName][AttributeValue]
+        Warn_XML_IRNode_MissingParameter,           //!< [LineNumber][ColumnNumber]
+        Error_XML_UnexpectedElement,                //!< [LineNumber][ColumnNumber][ExpectedElementName][ActualElementName]
+        Error_XML_InvalidXML,                       //!< [LineNumber][ColumnNumber][ErrorString]
+        Error_XML_ExpectingIRRootInstance,          //!< [LineNumber][ColumnNumber]
+        Error_XML_UnknownIRNodeType,                //!< [LineNumber][ColumnNumber][IRNodeTypeName]
+        Error_XML_ExpectingStartElement,            //!< [LineNumber][ColumnNumber][TokenString]
+        Error_XML_IRNode_Param_MissingName,         //!< [LineNumber][ColumnNumber]
+        Error_XML_IRNode_Param_MissingType,         //!< [LineNumber][ColumnNumber]
+        Error_XML_IRNode_Param_UnknownParam,        //!< [LineNumber][ColumnNumber][ParameterName]
+        Error_XML_UnknownValueType,                 //!< [LineNumber][ColumnNumber][ValueTypeName]
+        Error_XML_IRNode_Param_MissingData,         //!< [LineNumber][ColumnNumber][ParameterName]
+        Error_XML_IRNode_Param_ExpectEndElement,    //!< [LineNumber][ColumnNumber][ParameterName]
+        Error_XML_IRNode_Param_TypeMismatch,        //!< [LineNumber][ColumnNumber][ParameterName][ExpectedType][ActualType]
+        Error_XML_IRNode_Param_InvalidValue,        //!< [LineNumber][ColumnNumber][ParameterName][ParameterType][ValueString]
+        Error_XML_IRNode_Param_MultipleValue,       //!< [LineNumber][ColumnNumber][ParameterName]
+        Error_XML_IRNode_ParamAfterChildNode,       //!< [LineNumber][ColumnNumber]
 
         InvalidID
     };
@@ -241,7 +259,6 @@ public:
     }
     void pop(){
         if(hierarchyIndex >= 0){
-            hierarchyIndex = -1;
             release();
         }
     }

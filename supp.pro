@@ -24,6 +24,7 @@ SOURCES += \
     core/OutputHandler.cpp \
     core/Parser.cpp \
     core/Task.cpp \
+    core/XML_IR.cpp \
     ui/DocumentEdit.cpp \
     ui/DocumentWidget.cpp \
     ui/PlainTextDocumentWidget.cpp \
@@ -33,6 +34,7 @@ SOURCES += \
 HEADERS += \
     core/CLIDriver.h \
     core/Parser.h \
+    core/XML.h \
     ui/PlainTextDocumentWidget.h \
     util/ADT.h \
     core/Bundle.h \

@@ -476,8 +476,73 @@ IRRootInstance* Bundle::readIRFromJson(int irIndex, const QByteArray& json, Diag
         return nullptr;
     }
 }
+#include "core/XML.h"
+void testWriteXML(){
+    ConsoleDiagnosticEmitter diag;
+    IRRootType* ty = new IRRootType("test");
+    {
+        IRNodeType speech("speech");
+        speech.addParameter("character", ValueType::String, false);
+        speech.addParameter("dummy", ValueType::Int64, false);
+        speech.addParameter("text", ValueType::String, false);
+        IRNodeType back("back");
+        back.addParameter("text", ValueType::String, false);
+        IRNodeType root("root");
+        root.addChildNode("speech");
+        root.addChildNode("back");
+        ty->addNodeTypeDefinition(root);
+        ty->addNodeTypeDefinition(speech);
+        ty->addNodeTypeDefinition(back);
+        ty->setRootNodeType("root");
+    }
+    Q_ASSERT(ty->validate(diag));
+    int speechTyIndex = ty->getNodeTypeIndex("speech");
+    int backTyIndex = ty->getNodeTypeIndex("back");
+
+    IRRootInstance* inst = new IRRootInstance(*ty);
+    int rootIdx = inst->addNode(ty->getNodeTypeIndex("root"));
+    auto& root = inst->getNode(rootIdx);
+    int s1 = inst->addNode(speechTyIndex);
+    {
+        auto& s1n = inst->getNode(s1);
+        s1n.setParent(rootIdx);
+        root.addChildNode(s1);
+        QList<QVariant> args;
+        args.push_back(QVariant("TA"));
+        args.push_back(QVariant(0ll));
+        args.push_back(QVariant("Hello world!\nUmm.."));
+        s1n.setParameters(args);
+    }
+    int b1 = inst->addNode(backTyIndex);
+    {
+        auto& b1n = inst->getNode(b1);
+        b1n.setParent(rootIdx);
+        root.addChildNode(b1);
+        QList<QVariant> args;
+        args.push_back(QVariant("Hello world!\nUmm.."));
+        b1n.setParameters(args);
+    }
+    Q_ASSERT(inst->validate(diag));
+    QFile f("test.txt");
+    Q_ASSERT(f.open(QIODevice::WriteOnly));
+    Q_ASSERT(writeToXML(*inst, diag, &f));
+    f.close();
+    Q_ASSERT(f.open(QIODevice::ReadOnly));
+    IRRootInstance* readBack = readFromXML(*ty, diag, &f);
+    Q_ASSERT(readBack != nullptr);
+    f.close();
+    f.setFileName("test2.txt");
+    Q_ASSERT(f.open(QIODevice::WriteOnly));
+    Q_ASSERT(writeToXML(*readBack, diag, &f));
+    f.close();
+    delete readBack;
+    delete inst;
+    delete ty;
+}
 
 void testerEntry(){
+    testWriteXML();
+    return;
     Bundle* ptr = nullptr;
     IRRootInstance* instPtr = nullptr;
     {
