@@ -8,7 +8,7 @@ int main(int argc, char *argv[])
 {
     QCoreApplication::setOrganizationName( "SUPP Development Team" );
     QCoreApplication::setApplicationName( "supp" );
-#if 1
+#if 0
     testerEntry();
     return 0;
 #else

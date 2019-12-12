@@ -354,15 +354,16 @@ Parser* Parser::getParser(const ParserPolicy& policy, const IRRootType& ir, Diag
                         destList.reserve(exprList.size());
                         for(int i = 0, n = exprList.size(); i < n; ++i){
                             QSet<QString> referencedVals;
-                            destList.push_back(QList<PatternValueSubExpression>());
+                            QList<PatternValueSubExpression> curExpr;
                             if(Q_UNLIKELY(!ptr->context.parseValueTransformString(
                                               exprList.at(i),
-                                              destList.back(),
+                                              curExpr,
                                               referencedVals,
                                               false,
                                               diagnostic))){
                                 isValidated = false;
                             }
+                            destList.push_back(curExpr);
                             // we don't check reference made here yet
                         }
                     }
@@ -391,11 +392,11 @@ Parser* Parser::getParser(const ParserPolicy& policy, const IRRootType& ir, Diag
 
     // second pass: reorder parser nodes in BFS order
     Q_ASSERT(ptr->nodes.size() == policy.nodes.size());
+    std::size_t numNodes = static_cast<std::size_t>(ptr->nodes.size());
     decltype(ptr->nodes) tmpNodes;
     tmpNodes.swap(ptr->nodes);
     ptr->nodes.reserve(tmpNodes.size());
     QQueue<int> rawNodeIndexQueue;
-    std::size_t numNodes = static_cast<std::size_t>(ptr->nodes.size());
     // for each raw node index. what's the final index
     std::vector<int> rawNodeIndexToNewIndex(numNodes, -1);
     // used to check if there is any reference to a raw node index
@@ -838,6 +839,15 @@ bool Parser::ParseContext::parsePatternString(
                 // we successfully consumed the expression
                 isLastPatternAutoNeedFixup = true;
                 lastAutoSubPatternStr = exprFullString;
+                {
+                    int subPatternIndex = result.size();
+                    auto iter = valueNameToIndex.find(finalName);
+                    if(Q_UNLIKELY(iter != valueNameToIndex.end())){
+                        diagnostic(Diag::Error_Parser_BadPattern_Expr_DuplicatedDefinition, finalName, iter.value(), subPatternIndex);
+                        return false;
+                    }
+                    valueNameToIndex.insert(finalName, subPatternIndex);
+                }
                 view = view.mid(exprStartMark.length() + endMarkIndex + exprEndMark.length());
                 result.push_back(expr);
             }
@@ -883,7 +893,7 @@ bool Parser::ParseContext::parsePatternString(
                         }
                     }
                 }
-                if(matchPairIndex > 0){
+                if(matchPairIndex >= 0){
                     MatchPairFrame f;
                     f.index = matchPairIndex;
                     f.startMarkRef = view.left(maxLen);
@@ -1176,7 +1186,7 @@ bool Parser::ParseContext::parseValueTransformString(const QString& transform,
                 return false;
             }
             QStringRef refVal = bodyStart.left(endMarkIndex);
-            bool isLocalReference = refVal.contains('.');
+            bool isLocalReference = !refVal.contains('.');
             if(Q_UNLIKELY(!isLocalReference && isLocalOnly)){
                 StringDiagnosticRecord d;
                 d.str = transform;
@@ -1854,7 +1864,7 @@ std::pair<bool,QString> Parser::IRBuildContext::solveExternReference(const Parse
                 return fail;
         }else{
             // otherwise we are just searching by order
-            Q_ASSERT(step.ty == PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::AnyChildByOrder);
+            Q_ASSERT(step.ty == PatternValueSubExpression::ExternReferenceData::NodeTraverseStep::StepType::ChildByTypeAndOrder);
             int childIndex = step.ioSearchData.lookupNum;
             if(!step.ioSearchData.isNumIndexInsteadofOffset){
                 // offset based search
@@ -2260,11 +2270,13 @@ std::pair<int,int> Parser::findLongestMatchingPattern(const QList<Pattern>& patt
 
     for(int i = 0, num = patterns.size(); i < num; ++i){
         int curConsumeCount = match(text, curRawValue, context, patterns.at(i).elements);
-        if(curConsumeCount > numConsumed || (curConsumeCount == numConsumed && patterns.at(i).priorityScore > bestPatternScore)){
-            bestPatternIndex = i;
-            bestPatternScore = patterns.at(i).priorityScore;
-            numConsumed = curConsumeCount;
-            values.swap(curRawValue);
+        if(curConsumeCount > 0){
+            if(curConsumeCount > numConsumed || (curConsumeCount == numConsumed && patterns.at(i).priorityScore > bestPatternScore)){
+                bestPatternIndex = i;
+                bestPatternScore = patterns.at(i).priorityScore;
+                numConsumed = curConsumeCount;
+                values.swap(curRawValue);
+            }
         }
         curRawValue.clear();
     }
@@ -2298,7 +2310,7 @@ std::pair<int,int> Parser::ParseContext::getMatchingEndAdvanceDistance(QStringRe
     int nextMatchPairIndex = -1;
     int nextMatchPairStartLength = -1;
     std::tie(nextMatchPairPos, nextMatchPairIndex, nextMatchPairStartLength) = getMatchingStartAdvanceDistance(text.left(searchTextLen));
-    if(nextMatchPairPos == -1 || nextMatchPairPos > pos || (nextMatchPairPos == pos && nextMatchPairStartLength < (reach - pos))){
+    if(nextMatchPairPos == -1 || nextMatchPairPos > pos || (nextMatchPairPos == pos && nextMatchPairStartLength <= (reach - pos))){
         // no match pair start found, or the match pair start is not "early" in text enough (partial overlap with end marker)
         // done
         return std::make_pair(reach, reach - pos);
@@ -2320,6 +2332,7 @@ std::pair<int,int> Parser::ParseContext::getMatchingEndAdvanceDistance(QStringRe
         // no match for this match pair
         return std::make_pair(-1,-1);
     }
+    Q_ASSERT(endLen > 0);
     return std::make_pair(recurseStart + recurseAdvance, endLen);
 }
 
@@ -2565,7 +2578,8 @@ int Parser::match(QStringRef input, QHash<QString,QString>& values, const ParseC
         }
     }
     // if we reach here then all patterns are successfully matched
-    return text.position() - input.position();
+    // WARNING: QStringRef will give zero position and length if text is empty
+    return input.length() - text.length();
 }
 
 QStringList Parser::performValueTransform(const QStringList& paramName, const QHash<QString,QString>& rawValues, const QList<QList<PatternValueSubExpression> > &valueTransform)

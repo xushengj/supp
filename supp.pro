@@ -25,6 +25,8 @@ SOURCES += \
     core/Parser.cpp \
     core/Task.cpp \
     core/XML_IR.cpp \
+    core/XML_Parser.cpp \
+    core/test.cpp \
     ui/DocumentEdit.cpp \
     ui/DocumentWidget.cpp \
     ui/PlainTextDocumentWidget.cpp \

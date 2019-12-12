@@ -46,7 +46,7 @@ struct ParserNode
                                     //!<    otherwise, start a hierarchy with MatchPair
                                     //!< otherwise, get it as literal
 
-        int priorityScore;  //!< priority score override; set to 0 if it should be auto computed.
+        int priorityScore = 0;      //!< priority score override; set to 0 if it should be auto computed.
 
         /**
          * @brief The ParamValueOverwriteRecord struct describes an overwrite on ParserNode parameter

@@ -59,7 +59,61 @@ void ConsoleDiagnosticEmitter::diagnosticHandle(Diag::ID id, const QList<QVarian
         pathList.push_front(name);
         ptr = ptr->getPrev();
     }
-    testDump(pathList, QStringLiteral("Diagnostic"), Diag::getString(id), QString(), QString());
+    QString optionalText;
+    for(const auto& item : data){
+        switch(static_cast<QMetaType::Type>(item.type())){
+        default:{
+            int ty = item.userType();
+            if(ty == qMetaTypeId<ValueTypeWrapper>()){
+                optionalText.append("[ValueType: ");
+                ValueType vty = item.value<ValueTypeWrapper>().ty;
+                optionalText.append(getTypeNameString(vty));
+                optionalText.append(']');
+            }else if(ty == qMetaTypeId<StringDiagnosticRecord>()){
+                StringDiagnosticRecord record = item.value<StringDiagnosticRecord>();
+                optionalText.append("[StringDiagnostic: str=\"");
+                optionalText.append(record.str);
+                optionalText.append("\", info=\"");
+                optionalText.append(record.str.mid(record.infoStart, record.infoEnd - record.infoStart));
+                optionalText.append("\"(");
+                optionalText.append(QString::number(record.infoStart));
+                optionalText.append(',');
+                optionalText.append(QString::number(record.infoEnd));
+                optionalText.append("), err=\"");
+                optionalText.append(record.str.mid(record.errorStart, record.errorEnd - record.errorStart));
+                optionalText.append("\"(");
+                optionalText.append(QString::number(record.errorStart));
+                optionalText.append(',');
+                optionalText.append(QString::number(record.errorEnd));
+                optionalText.append(")]");
+            }else{
+                optionalText.append("[UnknownType]");
+            }
+        }break;
+        case QMetaType::Type::Int:{
+            optionalText.append("[int: ");
+            optionalText.append(QString::number(item.toInt()));
+            optionalText.append("]");
+        }break;
+        case QMetaType::Type::QString:{
+            optionalText.append("[string: ");
+            optionalText.append(item.toString());
+            optionalText.append("]");
+        }break;
+        case QMetaType::Type::QStringList:{
+            optionalText.append("[stringlist: ");
+            QStringList list = item.toStringList();
+            for(const auto& str : list){
+                optionalText.append(' ');
+                optionalText.append('"');
+                optionalText.append(str);
+                optionalText.append('"');
+            }
+            optionalText.append("]");
+        }break;
+        }
+    }
+    testDump(pathList, QStringLiteral("Diagnostic"), Diag::getString(id), QString(), optionalText);
 }
 
 /*

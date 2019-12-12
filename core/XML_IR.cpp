@@ -56,7 +56,7 @@ std::pair<bool,ValueType> getValueTypeFromName(QStringRef name)
 }
 
 namespace {
-bool writeToXML_IRNode(QXmlStreamWriter& xml, DiagnosticEmitterBase& diagnostic, const IRRootInstance& ir, int nodeIndex)
+void writeToXML_IRNode(QXmlStreamWriter& xml, const IRRootInstance& ir, int nodeIndex)
 {
     const auto& nodeInst = ir.getNode(nodeIndex);
     int tyIndex = nodeInst.getTypeIndex();
@@ -85,20 +85,16 @@ bool writeToXML_IRNode(QXmlStreamWriter& xml, DiagnosticEmitterBase& diagnostic,
     }
     if(nodeInst.getNumChildNode() > 0){
         for(int i = 0, n = nodeInst.getNumChildNode(); i < n; ++i){
-            bool isGood = writeToXML_IRNode(xml, diagnostic, ir, nodeInst.getChildNodeByOrder(i));
-            if(Q_UNLIKELY(!isGood))
-                return false;
+            writeToXML_IRNode(xml, ir, nodeInst.getChildNodeByOrder(i));
         }
     }
 
     xml.writeEndElement(); // node instance
-    return true;
 }
 }
 
-bool writeToXML(const IRRootInstance& ir, DiagnosticEmitterBase& diagnostic, QIODevice* dest)
+void XML::writeIRInstance(const IRRootInstance& ir, QIODevice* dest)
 {
-    Q_UNUSED(diagnostic)
     Q_ASSERT(ir.validated());
 
     QXmlStreamWriter xml(dest);
@@ -108,13 +104,9 @@ bool writeToXML(const IRRootInstance& ir, DiagnosticEmitterBase& diagnostic, QIO
     const auto& rootTy = ir.getType();
     xml.writeStartElement(STR_XML_IRROOTINST);
     xml.writeAttribute(STR_XML_IRROOTINST_TYPENAME, rootTy.getName());
-    bool isRootGood = writeToXML_IRNode(xml, diagnostic, ir, 0);
-    if(Q_UNLIKELY(!isRootGood)){
-        return false;
-    }
+    writeToXML_IRNode(xml, ir, 0);
     xml.writeEndElement(); // root instance
     xml.writeEndDocument();
-    return true;
 }
 
 namespace{
@@ -251,15 +243,12 @@ bool readFromXML_IRNodeInstance(QXmlStreamReader& xml, DiagnosticEmitterBase& di
             return false;
         }
         xml.readNext();
-        if(Q_UNLIKELY(!xml.isCharacters())){
-            diagnostic(Diag::Error_XML_IRNode_Param_MissingData,
-                       static_cast<int>(xml.lineNumber()),
-                       static_cast<int>(xml.columnNumber()),
-                       paramName);
-            return false;
+        // if the string is empty, we may have EndElement right after StartElement
+        QString paramData;
+        if(xml.isCharacters()){
+            paramData = xml.text().toString();
+            xml.readNext();
         }
-        QString paramData = xml.text().toString();
-        xml.readNext();
         if(Q_UNLIKELY(!xml.isEndElement())){
             diagnostic(Diag::Error_XML_IRNode_Param_ExpectEndElement,
                        static_cast<int>(xml.lineNumber()),
@@ -378,7 +367,7 @@ bool readFromXML_IRNodeInstance(QXmlStreamReader& xml, DiagnosticEmitterBase& di
     return true;
 }
 }
-IRRootInstance* readFromXML(const IRRootType &ty, DiagnosticEmitterBase& diagnostic, QIODevice* src)
+IRRootInstance* XML::readIRInstance(const IRRootType &ty, DiagnosticEmitterBase& diagnostic, QIODevice* src)
 {
     Q_ASSERT(ty.validated());
 
