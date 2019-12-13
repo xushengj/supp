@@ -1,4 +1,4 @@
-name: Build and Test
+name: Tests
 
 on: [push, pull_request]
 
@@ -21,3 +21,27 @@ jobs:
         run: windeployqt.exe debug
       - name: Test
         run: cmd.exe /C "cd debug & start /wait supp.exe --test & exit /b errorlevel"
+  linux:
+    name: Linux (Build only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2-beta
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v2
+      - name: Run QMake
+        run: qmake supp.pro
+      - name: Build
+        run: make
+  mac:
+    name: Mac (Build only)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2-beta
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v2
+      - name: Run QMake
+        run: qmake supp.pro
+      - name: Build
+        run: make
