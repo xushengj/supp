@@ -75,16 +75,16 @@ public:
         return std::deque<T>::at(static_cast<std::size_t>(index));
     }
     T& top(){
-        return back();
+        return std::deque<T>::back();
     }
     const T& top() const{
-        return back();
+        return std::deque<T>::back();
     }
     void push(const T& v){
-        push_back(v);
+        std::deque<T>::push_back(v);
     }
     void pop(){
-        pop_back();
+        std::deque<T>::pop_back();
     }
 };
 

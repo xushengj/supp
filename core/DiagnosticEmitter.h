@@ -299,7 +299,7 @@ public:
         appendParam(params, std::forward<Args>(arg)...);
         diagnosticHandle(id, params);
     }
-    template<>
+
     void operator()(Diag::ID id){
         diagnosticHandle(id, QList<QVariant>());
     }
@@ -318,12 +318,12 @@ protected:
 
 private:
     // we now only accept following types as parameter to diagnostic
-    void appendParam(QList<QVariant>& param, ValueType val){
+    void appendParam(QList<QVariant>& param, const ValueType& val){
         QVariant v;
         v.setValue(ValueTypeWrapper{val});
         param.push_back(v);
     }
-    void appendParam(QList<QVariant>& param, int val){
+    void appendParam(QList<QVariant>& param, const int& val){
         param.push_back(QVariant(val));
     }
     void appendParam(QList<QVariant>& param, const QString& val){
